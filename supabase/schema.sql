@@ -4,6 +4,20 @@
 -- 다시 실행해도 안전하도록 작성했습니다.
 -- =====================================================================
 
+-- 초대 코드 생성 (헷갈리는 글자 0/O, 1/I/L 제외한 6자리)
+create or replace function public.new_invite_code() returns text
+language plpgsql volatile as $$
+declare
+  alphabet text := 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  h text := replace(gen_random_uuid()::text, '-', '');
+  out text := '';
+begin
+  for i in 0..5 loop
+    out := out || substr(alphabet, (('x' || substr(h, i*2 + 1, 2))::bit(8)::int % length(alphabet)) + 1, 1);
+  end loop;
+  return out;
+end $$;
+
 -- ---------------------------------------------------------------------
 -- 1. 테이블
 -- ---------------------------------------------------------------------
@@ -21,6 +35,7 @@ create table if not exists public.allowed_emails (
   name        text not null default '',
   role        text not null check (role in ('admin','partner','viewer')),
   company_id  text references public.companies(id) on delete set null,
+  invite_code text default public.new_invite_code(),
   created_at  timestamptz not null default now(),
   constraint partner_needs_company check (role <> 'partner' or company_id is not null)
 );
@@ -33,6 +48,7 @@ create table if not exists public.profiles (
   role        text not null default 'pending' check (role in ('admin','partner','viewer','pending')),
   company_id  text references public.companies(id) on delete set null,
   avatar_path text,
+  linked      boolean not null default false,  -- 초대 코드 또는 관리자 승인으로 등록 사용자와 연결됨
   created_at  timestamptz not null default now()
 );
 
@@ -106,6 +122,12 @@ do $$ begin
   alter table public.companies add constraint companies_kind_check check (kind in ('partner','internal'));
 exception when duplicate_object then null; end $$;
 alter table public.profiles add column if not exists avatar_path text;
+alter table public.allowed_emails add column if not exists invite_code text default public.new_invite_code();
+update public.allowed_emails set invite_code = public.new_invite_code() where invite_code is null;
+alter table public.profiles add column if not exists linked boolean not null default false;
+-- 이미 권한이 붙어 있던 계정은 정상 연결된 것으로 표시
+update public.profiles set linked = true where role <> 'pending' and not linked;
+
 alter table public.members  add column if not exists photo_path text;
 alter table public.ax_reports add column if not exists member_id uuid references public.members(id) on delete restrict;
 alter table public.ax_reports drop constraint if exists ax_unique_month;
@@ -190,14 +212,34 @@ grant execute on function public.set_my_avatar(text) to authenticated;
 -- ---------------------------------------------------------------------
 -- 3. 트리거
 -- ---------------------------------------------------------------------
--- 가입 시 allowed_emails 를 보고 역할 부여 (목록에 없으면 pending = 아무것도 못 봄)
+-- 가입 처리
+--  · 초대 코드를 넣고 가입: 사용자 관리에 등록된 이메일 + 코드 일치일 때만 계정 생성 (틀리면 가입 자체를 막음)
+--  · 코드 없이 생긴 계정(대시보드에서 만든 계정 등): '승인 대기' → 관리자가 사용자 관리에서 승인
+--  · 단, 아직 관리자가 한 명도 연결되지 않았을 때 등록된 관리자 이메일은 바로 연결 (첫 설치용)
 create or replace function public.handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
-declare a public.allowed_emails%rowtype;
+declare
+  a public.allowed_emails%rowtype;
+  has_code boolean := coalesce(new.raw_user_meta_data ? 'invite_code', false);
+  code text := upper(trim(coalesce(new.raw_user_meta_data->>'invite_code', '')));
+  ok boolean := false;
 begin
   select * into a from public.allowed_emails where email = lower(new.email);
-  insert into public.profiles (id, email, name, role, company_id)
-  values (new.id, lower(new.email), coalesce(a.name, ''), coalesce(a.role, 'pending'), a.company_id)
+  if has_code then
+    if a.email is null or a.invite_code is null or code <> upper(a.invite_code) then
+      raise exception 'invalid_invite_code';
+    end if;
+    ok := true;
+  elsif a.email is not null and a.role = 'admin'
+        and not exists (select 1 from public.profiles where role = 'admin' and linked) then
+    ok := true;
+  end if;
+  insert into public.profiles (id, email, name, role, company_id, linked)
+  values (new.id, lower(new.email),
+          case when ok then coalesce(a.name, '') else '' end,
+          case when ok then a.role else 'pending' end,
+          case when ok then a.company_id else null end,
+          ok)
   on conflict (id) do nothing;
   return new;
 end $$;
@@ -206,28 +248,43 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created after insert on auth.users
   for each row execute function public.handle_new_user();
 
--- 사용자 관리에서 추가·수정·삭제하면 이미 가입한 계정에도 바로 반영
+-- 사용자 관리에서 수정·삭제하면 연결된 계정에 바로 반영 (연결 안 된 계정은 건드리지 않음)
 create or replace function public.sync_allowed_email() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
   if tg_op = 'DELETE' then
-    update public.profiles set role = 'pending', company_id = null where email = old.email;
+    update public.profiles set role = 'pending', company_id = null, linked = false where email = old.email;
     return old;
   end if;
   if tg_op = 'UPDATE' and old.email <> new.email then
-    update public.profiles set role = 'pending', company_id = null where email = old.email;
+    update public.profiles set role = 'pending', company_id = null, linked = false where email = old.email;
   end if;
   update public.profiles
      set role = new.role,
          company_id = new.company_id,
          name = case when new.name <> '' then new.name else name end
-   where email = new.email;
+   where email = new.email and linked;
   return new;
 end $$;
 
 drop trigger if exists allowed_emails_sync on public.allowed_emails;
 create trigger allowed_emails_sync after insert or update or delete on public.allowed_emails
   for each row execute function public.sync_allowed_email();
+
+-- 관리자 승인: 코드 없이 생긴 계정을 등록된 사용자로 연결
+create or replace function public.approve_user(p_email text) returns void
+language plpgsql security definer set search_path = public as $$
+declare a public.allowed_emails%rowtype;
+begin
+  if not public.is_admin() then raise exception 'admin only'; end if;
+  select * into a from public.allowed_emails where email = lower(trim(p_email));
+  if a.email is null then raise exception 'not registered'; end if;
+  update public.profiles
+     set linked = true, role = a.role, company_id = a.company_id,
+         name = case when a.name <> '' then a.name else name end
+   where email = a.email;
+end $$;
+grant execute on function public.approve_user(text) to authenticated;
 
 -- 공지: 작성자·작성일 보존, 수정일 갱신
 create or replace function public.notice_fill() returns trigger

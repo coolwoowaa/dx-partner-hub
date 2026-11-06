@@ -116,6 +116,25 @@ function leaveDays(v){
 const statusOf = sub => { const r = S.reviews[sub.id]; return (r && ts(r.reviewedAt) >= ts(sub.submittedAt)) ? r.status : 'submitted'; };
 const pendingCount = () => S.ax.filter(a => isPartnerAx(a) && statusOf(a)==='submitted').length;
 
+const CODE_ABC = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+function genCode(){ const b = new Uint8Array(6); crypto.getRandomValues(b); return [...b].map(x => CODE_ABC[x % CODE_ABC.length]).join(''); }
+const siteUrl = () => location.origin + location.pathname.replace(/index\.html$/, '');
+const inviteText = a => `[디지털/기업 허브] 계정 안내
+
+사이트: ${siteUrl()}
+이메일: ${a.email}
+초대 코드: ${a.inviteCode}
+
+처음 접속하면 로그인 화면 아래 '처음이신가요? 비밀번호 만들기'를 눌러
+위 이메일과 초대 코드를 넣고 비밀번호를 정해 주세요.
+초대 코드는 본인만 사용해 주세요.`;
+async function copyText(text, label){
+  try { await navigator.clipboard.writeText(text); toast(`${label}을(를) 복사했습니다.`); }
+  catch {
+    openModal(`${mhead('복사해서 전달하세요', '자동 복사가 막혀 있어요. 아래 내용을 선택해 복사해 주세요.')}<div class="mb"><textarea id="copy-box" rows="9" readonly>${esc(text)}</textarea></div><div class="mf"><button class="btn ink" data-act="close">닫기</button></div>`);
+    const t = $('#copy-box'); t.focus(); t.select();
+  }
+}
 let toastT;
 function toast(msg){ const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(()=> t.hidden = true, 2800); }
 function errMsg(e){
@@ -141,14 +160,14 @@ async function run(q, expectRows){
 /* ---------- data loading ---------- */
 const MAP = {
   companies: r => ({id:r.id, name:r.name, sort:r.sort, kind:r.kind || 'partner'}),
-  profiles:  r => ({id:r.id, email:r.email, name:r.name, role:r.role, companyId:r.company_id, avatarPath:r.avatar_path, createdAt:r.created_at}),
+  profiles:  r => ({id:r.id, email:r.email, name:r.name, role:r.role, companyId:r.company_id, avatarPath:r.avatar_path, linked:!!r.linked, createdAt:r.created_at}),
   members:   r => ({id:r.id, name:r.name, companyId:r.company_id, role:r.title, photoPath:r.photo_path, part:r.part || 'design'}),
   ax_posts:  r => ({id:r.id, title:r.title, summary:r.summary, body:r.body, part:r.part, companyId:r.company_id, status:r.status, usable:r.usable, tools:r.tools||[], category:r.category, priority:r.priority, start:r.start_date, end:r.end_date, attachments:r.attachments||[], createdBy:r.created_by, createdAt:r.created_at, updatedAt:r.updated_at}),
   notices:   r => ({id:r.id, title:r.title, body:r.body, category:r.category, pinned:r.pinned, attachments:r.attachments||[], createdBy:r.created_by, createdAt:r.created_at, updatedAt:r.updated_at}),
   vacations: r => ({id:r.id, memberId:r.member_id, companyId:r.company_id, type:r.type, start:r.start_date, end:r.end_date, memo:r.memo, createdBy:r.created_by, createdAt:r.created_at}),
   ax_reports:r => ({id:r.id, companyId:r.company_id, memberId:r.member_id, month:r.month, aiImage:r.ai_image, aiWork:r.ai_work, total:r.total, note:r.note, attachments:r.attachments||[], submittedBy:r.submitted_by, submittedAt:r.submitted_at, createdAt:r.created_at}),
   ax_reviews:r => ({id:r.report_id, status:r.status, comment:r.comment, reviewedBy:r.reviewed_by, reviewedAt:r.reviewed_at}),
-  allowed_emails: r => ({email:r.email, name:r.name, role:r.role, companyId:r.company_id, createdAt:r.created_at})
+  allowed_emails: r => ({email:r.email, name:r.name, role:r.role, companyId:r.company_id, inviteCode:r.invite_code || '', createdAt:r.created_at})
 };
 async function load(table){
   let q = sb.from(table).select('*');
@@ -675,21 +694,25 @@ function vTeam(){
 function vUsers(){
   if (!S.isAdmin) return `<div class="box"><div class="empty">DX 관리자만 볼 수 있는 메뉴입니다.</div></div>`;
   const byEmail = {}; Object.values(S.profiles).forEach(p => byEmail[p.email] = p);
-  const allowedSet = new Set(S.allowed.map(a => a.email));
-  const waiting = Object.values(S.profiles).filter(p => p.role==='pending' && !allowedSet.has(p.email));
+  const allowedMap = {}; S.allowed.forEach(a => allowedMap[a.email] = a);
+  const waiting = Object.values(S.profiles).filter(p => p.role==='pending');
   const rows = [...S.allowed].sort((a,b) => (a.role===b.role ? 0 : a.role==='admin' ? -1 : b.role==='admin' ? 1 : 0) || (a.companyId||'').localeCompare(b.companyId||'') || a.email.localeCompare(b.email));
-  return `<div class="head"><div><h1>사용자 관리</h1><p>여기에 등록된 이메일만 사이트를 볼 수 있습니다. 작성자는 공지사항을 뺀 팀원·휴가·AX 실적·첨부를 모두 올릴 수 있습니다.</p></div>
+  const notJoined = rows.filter(a => !(byEmail[a.email]?.linked)).length;
+  return `<div class="head"><div><h1>사용자 관리</h1><p>이메일을 등록하면 <b>초대 코드</b>가 만들어집니다. ‘안내 복사’로 사이트 주소·이메일·초대 코드를 복사해 본인에게 따로 전달하면, 본인이 로그인 화면의 ‘비밀번호 만들기’에서 계정을 만듭니다.</p></div>
     <button class="btn pri" data-act="user-new">+ 사용자 등록</button></div>
-  ${waiting.length ? `<div class="sec" style="margin-top:0"><div class="sec-h"><h2>승인 대기</h2><span class="muted" style="font-size:12px">로그인했지만 아직 등록되지 않은 계정</span></div>
-    <div class="tbl-wrap"><table><thead><tr><th>이메일</th><th>가입일</th><th></th></tr></thead><tbody>
-    ${waiting.map(p => `<tr><td>${esc(p.email)}</td><td class="num">${fmtTs(S.profiles[p.id]?.createdAt)}</td><td class="n"><button class="btn sm pri" data-act="user-new" data-email="${esc(p.email)}">등록</button></td></tr>`).join('')}
+  ${waiting.length ? `<div class="sec" style="margin-top:0"><div class="sec-h"><h2>승인 대기</h2><span class="muted" style="font-size:12px">초대 코드 없이 만들어진 계정입니다. 본인이 맞는지 확인한 뒤 승인하세요.</span></div>
+    <div class="tbl-wrap"><table><thead><tr><th>이메일</th><th>가입일</th><th>상태</th><th></th></tr></thead><tbody>
+    ${waiting.map(p => { const a = allowedMap[p.email]; return `<tr><td>${esc(p.email)}</td><td class="num">${fmtTs(p.createdAt)}</td><td>${a ? `<span class="chip warn">등록된 이메일 · ${roleLabel(a.role, a.companyId)}</span>` : '<span class="muted" style="font-size:12px">등록되지 않은 이메일</span>'}</td>
+      <td class="n">${a ? `<button class="btn sm pri" data-act="user-approve" data-email="${esc(p.email)}">승인</button>` : `<button class="btn sm" data-act="user-new" data-email="${esc(p.email)}">등록 후 승인</button>`}</td></tr>`; }).join('')}
     </tbody></table></div></div>` : ''}
-  <div class="sec" ${waiting.length ? '' : 'style="margin-top:0"'}><div class="sec-h"><h2>등록된 사용자</h2><span class="muted" style="font-size:12px">${rows.length}명</span></div>
-  <div class="tbl-wrap"><table><thead><tr><th>이메일</th><th>이름</th><th>역할</th><th>소속</th><th>로그인</th><th></th></tr></thead><tbody>
-    ${rows.length ? rows.map(a => `<tr><td><span class="who">${byEmail[a.email] ? userAv(byEmail[a.email].id, 22) : avImg(null, a.email, a.name || a.email, 22)}${esc(a.email)}</span></td><td>${esc(a.name || '—')}</td><td><span class="chip ${a.role==='admin'?'acc':''}">${roleLabel(a.role, a.companyId)}</span></td><td>${a.companyId ? coChip(a.companyId) : '<span class="muted">—</span>'}</td>
-      <td>${byEmail[a.email] ? '<span class="chip ok">로그인함</span>' : '<span class="muted" style="font-size:12px">첫 로그인 전</span>'}</td>
-      <td class="n"><button class="icon-btn" data-act="user-edit" data-email="${esc(a.email)}">수정</button></td></tr>`).join('')
-      : emptyRow(6, loading('allowed_emails') ? '불러오는 중…' : '등록된 사용자가 없습니다.')}
+  <div class="sec" ${waiting.length ? '' : 'style="margin-top:0"'}><div class="sec-h"><h2>등록된 사용자</h2><span class="muted" style="font-size:12px">${rows.length}명${notJoined ? ` · 아직 계정을 만들지 않은 사람 ${notJoined}명` : ''}</span></div>
+  <div class="tbl-wrap"><table><thead><tr><th>이메일</th><th>이름</th><th>권한</th><th>소속</th><th>계정</th><th>초대 코드</th><th></th></tr></thead><tbody>
+    ${rows.length ? rows.map(a => { const prof = byEmail[a.email], joined = prof?.linked;
+      return `<tr><td><span class="who">${prof ? userAv(prof.id, 22) : avImg(null, a.email, a.name || a.email, 22)}${esc(a.email)}</span></td><td>${esc(a.name || '—')}</td><td><span class="chip ${a.role==='admin'?'acc':''}">${roleLabel(a.role, a.companyId)}</span></td><td>${a.companyId ? coChip(a.companyId) : '<span class="muted">—</span>'}</td>
+      <td>${joined ? '<span class="chip ok">사용 중</span>' : prof ? '<span class="chip warn">승인 대기</span>' : '<span class="muted" style="font-size:12px">계정 만들기 전</span>'}</td>
+      <td>${joined ? '<span class="muted" style="font-size:12px">사용됨</span>' : `<span class="row" style="gap:6px;flex-wrap:nowrap"><code class="icode">${esc(a.inviteCode || '—')}</code><button class="btn sm" data-act="invite-copy" data-email="${esc(a.email)}">안내 복사</button></span>`}</td>
+      <td class="n"><button class="icon-btn" data-act="user-edit" data-email="${esc(a.email)}">수정</button></td></tr>`; }).join('')
+      : emptyRow(7, loading('allowed_emails') ? '불러오는 중…' : '등록된 사용자가 없습니다.')}
   </tbody></table></div></div>`;
 }
 
@@ -1043,11 +1066,14 @@ function userForm(email, presetEmail){
     <div class="f"><label for="u-name">이름</label><input type="text" id="u-name" maxlength="40" value="${esc(a?.name||'')}" placeholder="화면에 표시될 이름"></div>
     <div class="fr"><div class="f"><label for="u-role">권한</label><select id="u-role" ${self?'disabled':''}>${[['partner','작성자 (소속 데이터만)'],['admin','DX 관리자 (전체)'],['viewer','열람 전용']].map(([r,l]) => `<option value="${r}" ${(a?.role||'partner')===r?'selected':''}>${l}</option>`).join('')}</select></div>
       <div class="f"><label for="u-co">소속</label><select id="u-co"><option value="">없음</option>${[...S.companies].sort((x,y) => (x.kind==='internal'?0:1)-(y.kind==='internal'?0:1)).map(c => `<option value="${esc(c.id)}" ${a?.companyId===c.id?'selected':''}>${esc(c.name)}${c.kind==='internal'?' (정규직)':' (협력사)'}</option>`).join('')}</select></div></div>
+    ${a ? `<div class="f"><span class="lab">초대 코드</span><div class="row"><code class="icode" id="u-code">${esc(a.inviteCode || '—')}</code><button type="button" class="btn sm" data-act="invite-copy" data-email="${esc(a.email)}">안내 복사</button><button type="button" class="btn sm" data-act="invite-reissue" data-email="${esc(a.email)}">코드 재발급</button></div><span class="hint">코드가 다른 사람에게 알려졌다면 재발급하세요. 이미 계정을 만든 사람에게는 영향이 없습니다.</span></div>` : ''}
+    ${!a && presetEmail && Object.values(S.profiles).some(p => p.email===presetEmail && p.role==='pending') ? '<div class="banner" style="margin:0">이 이메일로 이미 만들어진 계정이 있습니다. 등록하면 그 계정을 바로 승인합니다. 본인이 맞는지 확인해 주세요.</div>' : ''}
     <div class="hint">작성자는 공지사항을 뺀 팀원·휴가·AX 실적·첨부를 모두 올리고 고칠 수 있습니다. 소속은 표시용이며, 정규직 소속이면 ‘팀원’, 협력사 소속이면 ‘협력사’로 보입니다. DX 관리자는 여기에 더해 공지 작성, 실적 검토, 그룹·사용자 관리를 합니다.${self ? ' 본인 계정의 권한은 바꿀 수 없습니다.' : ''}</div>
     <div class="err" id="f-err"></div>
   </form>
   <div class="mf">${a && !self ? `<span class="left" id="del-zone"><button class="btn danger" data-act="ask-del">접근 해제</button></span>` : ''}<button class="btn" data-act="close">취소</button><button class="btn pri" data-submit="f-user">${a ? '저장' : '등록'}</button></div>`);
   $('#f-user').dataset.email = email || '';
+  $('#f-user').dataset.preset = presetEmail || '';
   delTarget = {kind:'user', id:email};
 }
 async function saveUser(){
@@ -1058,8 +1084,15 @@ async function saveUser(){
   if (role==='partner' && !companyId) return $('#f-err').textContent = '작성자는 소속을 선택해주세요. (표시용)';
   if (!editing && S.allowed.some(a => a.email===email)) return $('#f-err').textContent = '이미 등록된 이메일입니다.';
   const row = {email, name:$('#u-name').value.trim(), role, company_id: role==='partner' ? companyId : (role==='admin' ? null : companyId)};
-  const ok = await run(sb.from('allowed_emails').upsert(row, {onConflict:'email'}).select('email'), true);
-  if (ok) { closeModal(); load('allowed_emails'); reload('profiles'); toast(editing ? '사용자 정보를 수정했습니다.' : `${email} 을(를) 등록했습니다.`); }
+  const preset = $('#f-user').dataset.preset;
+  const ok = await run(sb.from('allowed_emails').upsert(row, {onConflict:'email'}).select('email,invite_code'), true);
+  if (!ok) return;
+  let msg = editing ? '사용자 정보를 수정했습니다.' : `${email} 을(를) 등록했습니다. ‘안내 복사’로 초대 코드를 전달하세요.`;
+  if (!editing && preset===email && Object.values(S.profiles).some(p => p.email===email && p.role==='pending')) {
+    const {error} = await sb.rpc('approve_user', {p_email: email});
+    msg = error ? '등록했지만 승인하지 못했습니다. 승인 대기 목록에서 다시 승인해 주세요.' : `${email} 을(를) 등록하고 승인했습니다.`;
+  }
+  closeModal(); load('allowed_emails'); reload('profiles'); toast(msg);
 }
 
 /* delete flow */
@@ -1125,6 +1158,9 @@ document.addEventListener('click', e => {
     case 'm-photo-del': if (memPhoto) { if (memPhoto.cur && memPhoto.fresh.has(memPhoto.cur)) { removeFiles([memPhoto.cur]); memPhoto.fresh.delete(memPhoto.cur); } memPhoto.cur = null; syncMemPhoto(); } break;
     case 'my-photo-del': setMyPhoto(null); break;
     case 'user-new': userForm(null, el.dataset.email); break;
+    case 'invite-copy': { const a = S.allowed.find(x => x.email===el.dataset.email); if (a) copyText(inviteText(a), '초대 안내'); break; }
+    case 'invite-reissue': reissueCode(el.dataset.email); break;
+    case 'user-approve': approveUser(el.dataset.email); break;
     case 'user-edit': userForm(el.dataset.email); break;
     case 'upl-rm': { const f = upl.files.splice(Number(el.dataset.i),1)[0]; if (f?.path && upl.fresh.has(f.path)) { upl.fresh.delete(f.path); removeFiles([f.path]); } syncUpl(); break; }
     case 'lb': lightbox(el.dataset.path, el.dataset.name); break;
@@ -1176,6 +1212,19 @@ async function setMyPhoto(file){
   } catch (e) { toast(e.message && !e.code ? e.message : errMsg(e)); }
 }
 let pqT = 0;
+async function reissueCode(email){
+  const code = genCode();
+  const ok = await run(sb.from('allowed_emails').update({invite_code: code}).eq('email', email).select('email'), true);
+  if (!ok) return;
+  const a = S.allowed.find(x => x.email===email); if (a) a.inviteCode = code;
+  const el = $('#u-code'); if (el) el.textContent = code;
+  load('allowed_emails'); toast('새 초대 코드를 만들었습니다.');
+}
+async function approveUser(email){
+  const {error} = await sb.rpc('approve_user', {p_email: email});
+  if (error) return toast(errMsg(error));
+  reload('profiles'); load('allowed_emails'); toast(`${email} 계정을 승인했습니다.`);
+}
 function addTool(){
   const i = $('#p-tool-add'), v = (i?.value || '').trim(); if (!v) return;
   const g = $('.tg[data-group="tools"]');
@@ -1230,6 +1279,18 @@ function showGate(kind, email){
     g.innerHTML = `<div class="gate-card">${gateBrand}<h1>승인 대기 중입니다</h1>
       <p><b>${esc(email)}</b> 계정은 아직 사용자로 등록되지 않았습니다. DX디자인팀에 이 이메일의 등록을 요청해주세요. 등록되면 새로고침만 하면 됩니다.</p>
       <button class="btn" data-gate="reload">새로고침</button><button class="btn" data-gate="logout">다른 계정으로 로그인</button></div>`;
+  } else if (kind==='signup') {
+    g.innerHTML = `<div class="gate-card">${gateBrand}<h1>비밀번호 만들기</h1>
+      <p>DX디자인팀에서 받은 <b>초대 코드</b>와 등록된 이메일로 처음 한 번만 비밀번호를 만들면 됩니다.</p>
+      <form id="f-signup" novalidate style="display:flex;flex-direction:column;gap:12px">
+        <div class="f"><label for="l-email">이메일</label><input type="text" id="l-email" inputmode="email" autocomplete="username" value="${esc(email || lsGet('hub.email') || '')}"></div>
+        <div class="f"><label for="s-code">초대 코드</label><input type="text" id="s-code" maxlength="12" autocomplete="one-time-code" placeholder="예: K7M9QX" style="text-transform:uppercase;letter-spacing:.12em;font-weight:600"></div>
+        <div class="f"><label for="s-pw">비밀번호</label><input type="password" id="s-pw" autocomplete="new-password" placeholder="8자 이상" style="width:100%;height:36px;border:1px solid var(--line-2);border-radius:8px;background:var(--panel);padding:0 10px"></div>
+        <div class="f"><label for="s-pw2">비밀번호 확인</label><input type="password" id="s-pw2" autocomplete="new-password" style="width:100%;height:36px;border:1px solid var(--line-2);border-radius:8px;background:var(--panel);padding:0 10px"></div>
+        <button class="btn pri" data-gate="signup" type="submit">비밀번호 만들고 시작하기</button>
+      </form>
+      <button class="btn" data-gate="to-login">이미 비밀번호가 있어요 · 로그인</button>
+      <div id="l-msg" hidden></div></div>`;
   } else {
     g.innerHTML = `<div class="gate-card">${gateBrand}<h1>로그인</h1>
       <p>DX디자인팀에 등록된 이메일로 로그인하세요.</p>
@@ -1238,8 +1299,8 @@ function showGate(kind, email){
         <div class="f"><label for="l-pw">비밀번호</label><input type="password" id="l-pw" autocomplete="current-password" style="width:100%;height:36px;border:1px solid var(--line-2);border-radius:8px;background:var(--panel);padding:0 10px"></div>
         <button class="btn pri" data-gate="pw" type="submit">로그인</button>
       </form>
-      <div class="or">또는</div>
-      <button class="btn" data-gate="otp">이메일로 로그인 링크 받기</button>
+      <button class="btn" data-gate="to-signup">처음이신가요? 비밀번호 만들기</button>
+      ${cfg.EMAIL_LINK ? '<div class="or">또는</div><button class="btn" data-gate="otp">이메일로 로그인 링크 받기</button>' : ''}
       <div id="l-msg" hidden></div></div>`;
   }
   syncTheme();
@@ -1251,10 +1312,33 @@ document.addEventListener('click', async e => {
   const k = b.dataset.gate;
   if (k==='reload') return location.reload();
   if (k==='logout') { await sb.auth.signOut(); return location.replace(location.pathname); }
+  if (k==='to-signup') return showGate('signup', ($('#l-email')?.value || '').trim());
+  if (k==='to-login') return showGate('login');
   const email = ($('#l-email')?.value || '').trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return gateMsg('이메일을 정확히 입력해주세요.', 'bad');
   lsSet('hub.email', email);
   b.disabled = true;
+  if (k==='signup') {
+    const code = ($('#s-code').value || '').trim().toUpperCase(), pw = $('#s-pw').value, pw2 = $('#s-pw2').value;
+    if (!/^[A-Z0-9]{6}$/.test(code)) { b.disabled = false; return gateMsg('초대 코드 6자리를 정확히 입력해주세요.', 'bad'); }
+    if (pw.length < 8) { b.disabled = false; return gateMsg('비밀번호는 8자 이상으로 정해주세요.', 'bad'); }
+    if (pw !== pw2) { b.disabled = false; return gateMsg('두 비밀번호가 다릅니다.', 'bad'); }
+    const {data, error} = await sb.auth.signUp({email, password: pw, options: {data: {invite_code: code}, emailRedirectTo: siteUrl()}});
+    b.disabled = false;
+    if (error) {
+      const m = String(error.message || '');
+      if (/already|registered|exists/i.test(m)) return gateMsg('이미 비밀번호를 만든 이메일입니다. 로그인해 주세요. 비밀번호를 잊었다면 DX디자인팀에 알려주세요.', 'bad');
+      if (/database error|invalid_invite|saving new user/i.test(m) || error.status===500) return gateMsg('초대 코드가 맞지 않거나 등록되지 않은 이메일입니다. 이메일과 코드를 다시 확인해 주세요.', 'bad');
+      if (/signups? not allowed|disabled/i.test(m)) return gateMsg('지금은 계정을 만들 수 없도록 설정돼 있습니다. DX디자인팀에 알려주세요.', 'bad');
+      if (/password/i.test(m)) return gateMsg('비밀번호가 너무 단순합니다. 영문·숫자를 섞어 8자 이상으로 정해주세요.', 'bad');
+      if (/rate|limit|too many/i.test(m)) return gateMsg('시도가 너무 많습니다. 잠시 후 다시 해주세요.', 'bad');
+      return gateMsg(errMsg(error), 'bad');
+    }
+    if (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) return gateMsg('이미 비밀번호를 만든 이메일입니다. 로그인해 주세요.', 'bad');
+    if (!data?.session) return gateMsg('계정을 만들었습니다. 메일함의 인증 링크를 누른 뒤 로그인해 주세요.', 'ok');
+    gateMsg('계정을 만들었습니다. 잠시만요…', 'ok');
+    return;
+  }
   if (k==='pw') {
     const {error} = await sb.auth.signInWithPassword({email, password:$('#l-pw').value});
     b.disabled = false;
