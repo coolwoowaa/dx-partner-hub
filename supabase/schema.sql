@@ -71,10 +71,12 @@ create table if not exists public.vacations (
   constraint vacation_range check (end_date >= start_date)
 );
 
--- 월별 AX 실적 (협력사 × 월 1건, id = '<협력사id>_<YYYY-MM>')
+-- 월별 AX 실적: 협력사 팀원 × 월 1건 (id = '<팀원id>_<YYYY-MM>')
+-- member_id 가 비어 있는 행은 개인별 내역이 없는 회사 단위 기록 (기존 현황판 이관분, id = '<그룹id>_<YYYY-MM>')
 create table if not exists public.ax_reports (
   id           text primary key,
   company_id   text not null references public.companies(id),
+  member_id    uuid references public.members(id) on delete restrict,
   month        text not null check (month ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
   ai_image     int  not null check (ai_image >= 0),
   ai_work      int  check (ai_work >= 0),
@@ -85,8 +87,7 @@ create table if not exists public.ax_reports (
   submitted_at timestamptz not null default now(),
   created_at   timestamptz not null default now(),
   constraint ax_ai_le_total check (ai_image <= total),
-  constraint ax_id_format check (id = company_id || '_' || month),
-  constraint ax_unique_month unique (company_id, month)
+  constraint ax_id_format check (id = coalesce(member_id::text, company_id) || '_' || month)
 );
 
 -- DX팀 검토 결과. reviewed_at 이 submitted_at 보다 늦으면 그 상태가 유효,
@@ -106,6 +107,11 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 alter table public.profiles add column if not exists avatar_path text;
 alter table public.members  add column if not exists photo_path text;
+alter table public.ax_reports add column if not exists member_id uuid references public.members(id) on delete restrict;
+alter table public.ax_reports drop constraint if exists ax_unique_month;
+alter table public.ax_reports drop constraint if exists ax_id_format;
+alter table public.ax_reports add constraint ax_id_format check (id = coalesce(member_id::text, company_id) || '_' || month);
+create index if not exists ax_reports_member_idx on public.ax_reports (member_id);
 
 create index if not exists vacations_dates_idx on public.vacations (start_date, end_date);
 create index if not exists ax_reports_month_idx on public.ax_reports (month);
@@ -224,11 +230,14 @@ drop trigger if exists vacations_fill on public.vacations;
 create trigger vacations_fill before insert or update on public.vacations
   for each row execute function public.vacation_fill();
 
--- AX 실적: id 자동 계산, 제출자·제출 시각은 서버가 기록
+-- AX 실적: 소속은 팀원에서 자동으로 채우고 id 자동 계산, 제출자·제출 시각은 서버가 기록
 create or replace function public.ax_fill() returns trigger
 language plpgsql as $$
 begin
-  new.id := new.company_id || '_' || new.month;
+  if new.member_id is not null then
+    new.company_id := (select m.company_id from public.members m where m.id = new.member_id);
+  end if;
+  new.id := coalesce(new.member_id::text, new.company_id) || '_' || new.month;
   if auth.uid() is not null then
     new.submitted_by := auth.uid();
     new.submitted_at := now();

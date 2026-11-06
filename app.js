@@ -37,7 +37,7 @@ const S = {
   notices:[], vacations:[], members:[], companies:[], ax:[], reviews:{}, profiles:{}, allowed:[],
   loaded:{}, loadErr:false,
   cal:{y:now.getFullYear(), m:now.getMonth()}, coFilter:'all',
-  axYear:now.getFullYear(), axFilter:'pending', noticeQ:'', noticeCat:'all'
+  axYear:now.getFullYear(), axMonth:null, axCo:'all', axFilter:'pending', noticeQ:'', noticeCat:'all'
 };
 
 /* ---------- helpers ---------- */
@@ -76,6 +76,9 @@ const isInternal = id => coById(id)?.kind === 'internal';
 const partnerCos = () => S.companies.filter(c => c.kind !== 'internal');
 const writablePartnerCos = () => partnerCos().filter(c => canCo(c.id));
 const isPartnerAx = a => !isInternal(a.companyId);
+const partnerMembers = () => S.members.filter(m => !isInternal(m.companyId)).sort((a,b) => (coById(a.companyId)?.sort||0) - (coById(b.companyId)?.sort||0) || a.name.localeCompare(b.name,'ko'));
+const axWho = a => a.memberId ? (memberById(a.memberId)?.name || '삭제된 팀원') : '회사 단위 (이관)';
+const sumAx = list => list.reduce((t,a) => ({ai:t.ai+(+a.aiImage||0), tot:t.tot+(+a.total||0), work:t.work+(+a.aiWork||0), workN:t.workN+(a.aiWork!=null?1:0), n:t.n+1}), {ai:0, tot:0, work:0, workN:0, n:0});
 const roleLabel = (role, cid) => role==='partner' ? (isInternal(cid) ? '팀원' : '협력사') : ROLES[role];
 const memberById = id => S.members.find(m => m.id===id);
 const nameOf = id => { const p = id && S.profiles[id]; return p ? (p.name || p.email.split('@')[0]) : (id ? '알 수 없음' : '—'); };
@@ -103,7 +106,7 @@ function errMsg(e){
   const code = e?.code || '', m = String(e?.message || '');
   if (code==='42501' || /row-level security|permission denied|Unauthorized|403/i.test(m)) return '권한이 없어 처리하지 못했습니다.';
   if (code==='23514') return '입력값을 확인해주세요.';
-  if (code==='23503') return '연결된 데이터가 있어 처리할 수 없습니다.';
+  if (code==='23503') return /ax_reports/.test(m) ? 'AX 실적 기록이 있어 삭제할 수 없습니다.' : '연결된 데이터가 있어 처리할 수 없습니다.';
   if (code==='23505') return '이미 등록된 항목입니다.';
   if (/exceeded the maximum allowed size|too large|413/i.test(m)) return '파일이 너무 큽니다. 50MB 이하로 올려주세요.';
   if (/Failed to fetch|NetworkError/i.test(m)) return '네트워크 연결을 확인해주세요.';
@@ -126,7 +129,7 @@ const MAP = {
   members:   r => ({id:r.id, name:r.name, companyId:r.company_id, role:r.title, photoPath:r.photo_path}),
   notices:   r => ({id:r.id, title:r.title, body:r.body, category:r.category, pinned:r.pinned, attachments:r.attachments||[], createdBy:r.created_by, createdAt:r.created_at, updatedAt:r.updated_at}),
   vacations: r => ({id:r.id, memberId:r.member_id, companyId:r.company_id, type:r.type, start:r.start_date, end:r.end_date, memo:r.memo, createdBy:r.created_by, createdAt:r.created_at}),
-  ax_reports:r => ({id:r.id, companyId:r.company_id, month:r.month, aiImage:r.ai_image, aiWork:r.ai_work, total:r.total, note:r.note, attachments:r.attachments||[], submittedBy:r.submitted_by, submittedAt:r.submitted_at, createdAt:r.created_at}),
+  ax_reports:r => ({id:r.id, companyId:r.company_id, memberId:r.member_id, month:r.month, aiImage:r.ai_image, aiWork:r.ai_work, total:r.total, note:r.note, attachments:r.attachments||[], submittedBy:r.submitted_by, submittedAt:r.submitted_at, createdAt:r.created_at}),
   ax_reviews:r => ({id:r.report_id, status:r.status, comment:r.comment, reviewedBy:r.reviewed_by, reviewedAt:r.reviewed_at}),
   allowed_emails: r => ({email:r.email, name:r.name, role:r.role, companyId:r.company_id, createdAt:r.created_at})
 };
@@ -273,17 +276,18 @@ function vHome(){
   const weekSet = new Set(); days.forEach(d => vacOn(d).forEach(v => weekSet.add(v.id)));
   const pc = pendingCount(), rm = prevMonth();
   const recent = S.notices.filter(n => (Date.now() - ts(n.createdAt)) < 7*864e5).length;
-  const pcos = partnerCos();
-  const subs = pcos.map(c => S.ax.find(a => a.companyId===c.id && a.month===rm));
-  const subCnt = subs.filter(Boolean).length;
+  const pcos = partnerCos(), pm = partnerMembers();
+  const axRm = S.ax.filter(a => isPartnerAx(a) && a.month===rm);
+  const subMem = new Set(axRm.filter(a => a.memberId).map(a => a.memberId));
+  const legacyRm = pcos.length && pcos.every(c => axRm.some(a => a.companyId===c.id && !a.memberId));
   const notices = sortedNotices().slice(0,6);
   return `
   <div class="head"><div><h1>디지털/기업 허브</h1><p>${now.getFullYear()}년 ${now.getMonth()+1}월 ${now.getDate()}일 (${DOW[now.getDay()]}) · 공지, 휴가 일정, AX 실적을 한곳에서 관리합니다.</p></div>
-    <div class="row">${canW() ? `<button class="btn ${writablePartnerCos().length ? '' : 'pri'}" data-act="vac-new">휴가 등록</button>` : ''}${writablePartnerCos().length ? `<button class="btn pri" data-act="ax-new">AX 실적 제출</button>` : ''}</div></div>
+    <div class="row">${canW() ? `<button class="btn" data-act="vac-new">휴가 등록</button><button class="btn pri" data-act="ax-new">AX 실적 제출</button>` : ''}</div></div>
   <div class="tiles">
     <a class="tile" href="#leave"><span>오늘 휴가</span><b>${todayCnt}명</b><small>이번 주 ${weekSet.size}건</small></a>
     <a class="tile ${pc?'alert':''}" href="#ax"><span>첨부 검토 대기</span><b>${pc}건</b><small>${S.isAdmin ? 'DX팀 확인이 필요한 제출' : '확인 전 제출'}</small></a>
-    <a class="tile" href="#ax"><span>${monthLabel(rm)} 실적 제출</span><b>${subCnt}/${pcos.length}</b><small>${pcos.length-subCnt ? `미제출 ${pcos.length-subCnt}곳` : '모든 협력사 제출'}</small></a>
+    <a class="tile" href="#ax" data-act="ax-goto" data-month="${rm}"><span>${monthLabel(rm)} 실적 제출</span><b>${legacyRm ? '완료' : `${subMem.size}/${pm.length}명`}</b><small>${legacyRm ? '기존 현황판의 회사 단위 기록' : !pm.length ? '협력사 팀원을 먼저 등록하세요' : pm.length-subMem.size ? `미제출 ${pm.length-subMem.size}명` : '모든 팀원 제출'}</small></a>
     <a class="tile" href="#notice"><span>최근 7일 공지</span><b>${recent}건</b><small>전체 ${S.notices.length}건</small></a>
   </div>
 
@@ -299,12 +303,12 @@ function vHome(){
       <div class="box list">${notices.length ? notices.map(noticeLi).join('') :
         `<div class="empty">${loading('notices') ? '불러오는 중…' : `<b>등록된 공지가 없습니다</b>${S.isAdmin ? '공지사항 메뉴에서 첫 공지를 작성하세요.' : 'DX디자인팀이 공지를 올리면 여기에 표시됩니다.'}`}</div>`}</div></div>
     <div><div class="sec-h"><h2>${monthLabel(rm, true)} AX 실적</h2><a class="more" href="#ax">현황판 →</a></div>
-      <div class="box list">${pcos.length ? pcos.map((c,i) => {
-        const s = subs[i];
-        if (!s) return `<div class="li" ${canCo(c.id) ? `data-act="ax-new" data-co="${esc(c.id)}" data-month="${rm}"` : 'style="cursor:default"'}>${coChip(c.id)}<span class="grow muted">미제출</span>${canCo(c.id)?'<span class="chip acc">제출하기</span>':''}</div>`;
-        const st = STATUS[statusOf(s)];
-        return `<div class="li" data-act="ax-view" data-id="${esc(s.id)}">${coChip(c.id)}<span class="grow"><span class="ttl num">적용률 ${pct(s.aiImage,s.total) ?? '–'}%</span><span class="meta num">AI 이미지 ${s.aiImage} · 전체 ${s.total} · 첨부 ${(s.attachments||[]).length}개</span></span><span class="chip ${st.c}">${st.l}</span></div>`;
-      }).join('') : `<div class="empty">${loading('companies') ? '불러오는 중…' : '<b>등록된 협력사가 없습니다</b>협력사 · 팀원 메뉴에서 추가하세요.'}</div>`}</div></div>
+      <div class="box list">${pcos.length ? [...pcos.map(c => {
+        const l = axRm.filter(a => a.companyId===c.id), sm = sumAx(l);
+        const mem = pm.filter(m => m.companyId===c.id), sub = mem.filter(m => subMem.has(m.id)).length;
+        const pend = l.filter(a => statusOf(a)==='submitted').length;
+        return `<div class="li" data-act="ax-goto" data-month="${rm}" data-co="${esc(c.id)}">${coChip(c.id)}<span class="grow"><span class="ttl num">${sm.n ? `적용률 ${pct(sm.ai,sm.tot) ?? '–'}% · AI ${sm.ai} / 전체 ${sm.tot}` : '<span class="muted">제출된 실적 없음</span>'}</span><span class="meta num">${l.some(a => !a.memberId) ? '회사 단위 기록' : mem.length ? `제출 ${sub}/${mem.length}명` : '등록된 팀원 없음'}${pend ? ` · 검토 대기 ${pend}건` : ''}</span></span>${pend ? '<span class="chip warn">검토 대기</span>' : sm.n ? '<span class="chip ok">제출</span>' : ''}</div>`;
+      }), (() => { const sm = sumAx(axRm); return sm.n ? `<div class="li" style="cursor:default;background:var(--hl)"><span class="chip">협력사 합계</span><span class="grow"><span class="ttl num">적용률 ${pct(sm.ai,sm.tot) ?? '–'}% · AI ${sm.ai} / 전체 ${sm.tot}</span></span></div>` : ''; })()].join('') : `<div class="empty">${loading('companies') ? '불러오는 중…' : '<b>등록된 협력사가 없습니다</b>협력사 · 팀원 메뉴에서 추가하세요.'}</div>`}</div></div>
   </div>`;
 }
 
@@ -391,53 +395,97 @@ function vLeave(){
 }
 
 /* ---------- AX ---------- */
+function axCell(a){
+  const st = statusOf(a);
+  return `<button class="cellbtn" data-act="ax-view" data-id="${esc(a.id)}"><span class="rate num"><span class="dot st-${st}" title="${STATUS[st].l}"></span>${pct(a.aiImage,a.total) ?? '–'}%</span><span class="cnt num">${a.aiImage} / ${a.total}</span></button>`;
+}
+function sumCell(sm){
+  return sm.n ? `<span class="cellsum"><span class="rate num">${pct(sm.ai,sm.tot) ?? '–'}%</span><span class="cnt num">${sm.ai} / ${sm.tot}</span></span>` : '<span class="miss">·</span>';
+}
 function vAx(){
-  const yr = S.axYear;
-  const AX = S.ax.filter(isPartnerAx), pcos = partnerCos();
+  const yr = S.axYear, rm = prevMonth();
+  const AX = S.ax.filter(isPartnerAx), pcos = partnerCos(), pm = partnerMembers();
   const yrs = [...new Set([now.getFullYear(), ...AX.map(a => Number(a.month.slice(0,4)))])].sort();
-  const subsY = AX.filter(a => a.month.startsWith(yr+'-'));
-  const firstM = subsY.length ? Math.min(...subsY.map(a => Number(a.month.slice(5)))) : 1;
+  const AXY = AX.filter(a => a.month.startsWith(yr+'-'));
+  const firstM = AXY.length ? Math.min(...AXY.map(a => Number(a.month.slice(5)))) : 1;
   const months = []; for (let i = firstM; i <= 12; i++) months.push(`${yr}-${pad(i)}`);
-  const cellFor = (cid, mo) => AX.find(a => a.companyId===cid && a.month===mo);
-  const sums = months.map(mo => { const l = AX.filter(a => a.month===mo); return {ai:l.reduce((s,a)=>s+(+a.aiImage||0),0), work:l.reduce((s,a)=>s+(+a.aiWork||0),0), workN:l.filter(a=>a.aiWork!=null).length, tot:l.reduce((s,a)=>s+(+a.total||0),0)}; });
-  const rm = prevMonth(), filt = S.axFilter;
-  const list = [...AX].filter(a => filt==='all' || (filt==='pending' ? statusOf(a)!=='approved' : statusOf(a)===filt))
-    .sort((a,b) => ts(b.submittedAt) - ts(a.submittedAt));
+  const pastMonths = months.filter(m => m <= curMonth);
+  if (!S.axMonth || !S.axMonth.startsWith(yr+'-')) S.axMonth = [...new Set(AXY.map(a => a.month))].sort().filter(m => m <= curMonth).pop() || (rm.startsWith(yr+'-') ? rm : pastMonths[pastMonths.length-1] || `${yr}-01`);
+  const mo = S.axMonth;
+  const shownCos = S.axCo==='all' ? pcos : pcos.filter(c => c.id===S.axCo);
 
-  const pts = months.map((mo,i) => ({mo, v: pct(sums[i].ai, sums[i].tot)}));
+  // KPI for selected month
+  const inMo = AX.filter(a => a.month===mo), tMo = sumAx(inMo);
+  const subMem = new Set(inMo.filter(a => a.memberId).map(a => a.memberId));
+  const tiles = [
+    `<div class="tile"><span>${monthLabel(mo)} 협력사 합계 적용률</span><b>${tMo.n ? (pct(tMo.ai,tMo.tot) ?? '–')+'%' : '–'}</b><small class="num">AI 이미지 ${tMo.ai} / 전체 ${tMo.tot}${tMo.workN ? ` · AI 활용 ${tMo.work}건` : ''}</small></div>`,
+    ...pcos.map(c => { const sm = sumAx(inMo.filter(a => a.companyId===c.id)); const mem = pm.filter(m => m.companyId===c.id);
+      const leg = inMo.some(a => a.companyId===c.id && !a.memberId);
+      return `<div class="tile"><span><span class="dot" style="color:${coColor(c.id)}"></span> ${esc(c.name)} 적용률</span><b>${sm.n ? (pct(sm.ai,sm.tot) ?? '–')+'%' : '–'}</b><small class="num">AI ${sm.ai} / 전체 ${sm.tot} · ${leg ? '회사 단위 기록' : `제출 ${mem.filter(m => subMem.has(m.id)).length}/${mem.length}명`}</small></div>`; })
+  ].join('');
+
+  // chart: monthly partner total
+  const sums = months.map(m => sumAx(AX.filter(a => a.month===m && (S.axCo==='all' || a.companyId===S.axCo))));
+  const pts = months.map((m,i) => ({m, v: pct(sums[i].ai, sums[i].tot)}));
   const W = Math.max(320, Math.min(1200, (($('#view')?.clientWidth) || 900) - 100)), H = 190, L = 34, B = 26, T = 18, cw = (W-L-6)/pts.length, bw = Math.min(30, cw*.5);
   const yv = v => T + (H-T-B) * (1 - v/100);
-  const chart = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="월별 협력사 합계 AI 적용률">
+  const chart = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="월별 AI 적용률">
     ${[0,25,50,75,100].map(g => `<line class="grid" x1="${L}" x2="${W-6}" y1="${yv(g)}" y2="${yv(g)}"/><text class="ax-l" x="${L-6}" y="${yv(g)+4}" text-anchor="end">${g}%</text>`).join('')}
-    ${pts.map((p,i) => { const cx = L + cw*i + cw/2; return `${p.v!=null ? `<rect class="bar ${i===pts.length-1 || pts[i+1]?.v==null ? 'cur':''}" x="${cx-bw/2}" y="${yv(p.v)}" width="${bw}" height="${yv(0)-yv(p.v)}" rx="3"/><text class="val" x="${cx}" y="${yv(p.v)-5}" text-anchor="middle">${p.v}%</text>` : ''}<text class="ax-l" x="${cx}" y="${H-8}" text-anchor="middle">${Number(p.mo.slice(5))}월</text>`; }).join('')}
+    ${pts.map((p,i) => { const cx = L + cw*i + cw/2; return `${p.v!=null ? `<rect class="bar ${p.m===mo ? 'cur':''}" x="${cx-bw/2}" y="${yv(p.v)}" width="${bw}" height="${yv(0)-yv(p.v)}" rx="3"/><text class="val" x="${cx}" y="${yv(p.v)-5}" text-anchor="middle">${p.v}%</text>` : ''}<text class="ax-l" x="${cx}" y="${H-8}" text-anchor="middle">${Number(p.m.slice(5))}월</text>`; }).join('')}
   </svg>`;
 
-  return `<div class="head"><div><h1>AX 실적 · 첨부 검토</h1><p>협력사가 월별 AI 이미지 제작 건수와 AI 활용 제작 건수를 증빙 파일과 함께 제출하면, DX디자인팀이 첨부를 확인합니다.</p></div>
-    <div class="row">${yrs.length>1 ? `<select id="axyear" style="width:auto">${yrs.map(y => `<option value="${y}" ${y===yr?'selected':''}>${y}년</option>`).join('')}</select>` : ''}${writablePartnerCos().length ? `<button class="btn pri" data-act="ax-new">+ 실적 제출</button>` : ''}</div></div>
+  // per-member matrix grouped by company
+  const rowsHtml = shownCos.map(c => {
+    const cAX = AXY.filter(a => a.companyId===c.id);
+    const mem = pm.filter(m => m.companyId===c.id);
+    const extraIds = [...new Set(cAX.filter(a => a.memberId && !mem.some(m => m.id===a.memberId)).map(a => a.memberId))];
+    const people = [...mem, ...extraIds.map(id => memberById(id) || {id, name:'삭제된 팀원', companyId:c.id})];
+    const legacy = cAX.filter(a => !a.memberId), legacyMonths = new Set(legacy.map(a => a.month));
+    const grp = `<tr class="grp"><td><span class="dot" style="color:${coColor(c.id)}"></span> <b>${esc(c.name)}</b> <span class="muted" style="font-weight:400">합계</span></td>${months.map(m => `<td>${sumCell(sumAx(cAX.filter(a => a.month===m)))}</td>`).join('')}<td>${sumCell(sumAx(cAX))}</td></tr>`;
+    const memRows = people.map(m => { const mine = cAX.filter(a => a.memberId===m.id);
+      return `<tr><td class="pcell"><span class="who">${memberAv(m, 22)}${esc(m.name)}</span></td>${months.map(mm => { const a = mine.find(x => x.month===mm);
+        if (a) return `<td>${axCell(a)}</td>`;
+        if (mm <= rm && canW() && !legacyMonths.has(mm)) return `<td><button class="cellbtn" data-act="ax-new" data-member="${esc(m.id)}" data-month="${mm}"><span class="miss">미제출</span></button></td>`;
+        return `<td><span class="miss">·</span></td>`; }).join('')}<td>${sumCell(sumAx(mine))}</td></tr>`; }).join('');
+    const legRow = legacy.length ? `<tr><td class="pcell"><span class="muted">회사 단위 (이관)</span></td>${months.map(mm => { const a = legacy.find(x => x.month===mm); return `<td>${a ? axCell(a) : '<span class="miss">·</span>'}</td>`; }).join('')}<td>${sumCell(sumAx(legacy))}</td></tr>` : '';
+    const none = !people.length && !legacy.length ? `<tr><td class="pcell" colspan="${months.length+2}"><span class="muted">등록된 팀원이 없습니다. 협력사 · 팀원에서 추가하세요.</span></td></tr>` : '';
+    return grp + memRows + legRow + none;
+  }).join('');
+  const totals = months.map(m => sumAx(AXY.filter(a => a.month===m && shownCos.some(c => c.id===a.companyId))));
+  const yearTot = sumAx(AXY.filter(a => shownCos.some(c => c.id===a.companyId)));
 
-  <div class="sec-h"><h2>${yr}년 협력사 AI 적용 현황</h2><span class="muted" style="font-size:12px">적용률 = AI 이미지 제작 건수 ÷ 전체 이미지 제작 수 · 칸을 누르면 제출 내용과 첨부를 볼 수 있습니다</span></div>
-  <div class="tbl-wrap"><table class="mx"><thead><tr><th>협력사</th>${months.map(mo => `<th>${Number(mo.slice(5))}월</th>`).join('')}</tr></thead><tbody>
-    ${pcos.length ? pcos.map(c => `<tr><td><b>${esc(c.name)}</b></td>${months.map(mo => {
-      const s = cellFor(c.id, mo);
-      if (s) { const st = statusOf(s); return `<td><button class="cellbtn" data-act="ax-view" data-id="${esc(s.id)}"><span class="rate num"><span class="dot st-${st}" title="${STATUS[st].l}"></span>${pct(s.aiImage,s.total) ?? '–'}%</span><span class="cnt num">${s.aiImage} / ${s.total}</span></button></td>`; }
-      if (mo <= rm) return `<td>${canCo(c.id) ? `<button class="cellbtn" data-act="ax-new" data-co="${esc(c.id)}" data-month="${mo}"><span class="miss">미제출</span></button>` : '<span class="miss">미제출</span>'}</td>`;
-      return `<td><span class="miss">·</span></td>`;
-    }).join('')}</tr>`).join('') : emptyRow(months.length+1, loading('companies') ? '불러오는 중…' : '등록된 협력사가 없습니다.')}
-    <tr class="hl"><td>적용률 (협력사 합계)</td>${sums.map(s => `<td class="num"><b>${s.tot ? pct(s.ai,s.tot)+'%' : '–'}</b></td>`).join('')}</tr>
-    <tr class="hl"><td>AI 활용 제작 (합계)</td>${sums.map(s => `<td class="num">${s.workN ? s.work+'건' : '–'}</td>`).join('')}</tr>
+  const filt = S.axFilter;
+  const list = [...AX].filter(a => filt==='all' || (filt==='pending' ? statusOf(a)!=='approved' : statusOf(a)===filt))
+    .filter(a => S.axCo==='all' || a.companyId===S.axCo)
+    .sort((a,b) => ts(b.submittedAt) - ts(a.submittedAt));
+
+  return `<div class="head"><div><h1>AX 실적 · 첨부 검토</h1><p>협력사 팀원이 개인별로 월 실적(AI 이미지 제작 건수, AI 활용 제작 건수, 전체 이미지 제작 수)과 증빙을 올리면, 협력사별 합계와 팀원별 실적이 함께 집계됩니다.</p></div>
+    <div class="row">${yrs.length>1 ? `<select id="axyear" style="width:auto">${yrs.map(y => `<option value="${y}" ${y===yr?'selected':''}>${y}년</option>`).join('')}</select>` : ''}${canW() ? `<button class="btn pri" data-act="ax-new">+ 실적 제출</button>` : ''}</div></div>
+
+  <div class="row" style="justify-content:space-between;margin-bottom:12px">
+    <div class="row"><label for="axmonth" class="muted" style="font-size:12.5px">기준 월</label><select id="axmonth" style="width:auto">${pastMonths.map(m => `<option value="${m}" ${m===mo?'selected':''}>${monthLabel(m,true)}</option>`).join('')}</select></div>
+    <div class="seg" role="group" aria-label="협력사 필터"><button data-act="axco" data-k="all" class="${S.axCo==='all'?'on':''}">전체</button>${pcos.map(c => `<button data-act="axco" data-k="${esc(c.id)}" class="${S.axCo===c.id?'on':''}"><span class="dot" style="color:${coColor(c.id)}"></span> ${esc(c.name)}</button>`).join('')}</div>
+  </div>
+  <div class="tiles fit">${tiles}</div>
+
+  <div class="sec"><div class="sec-h"><h2>${yr}년 팀원별 AI 적용 현황</h2><span class="muted" style="font-size:12px">적용률 = AI 이미지 제작 건수 ÷ 전체 이미지 제작 수 · 칸을 누르면 제출 내용과 첨부를 볼 수 있습니다</span></div>
+  <div class="tbl-wrap"><table class="mx"><thead><tr><th>협력사 / 팀원</th>${months.map(m => `<th class="${m===mo?'curm':''}">${Number(m.slice(5))}월</th>`).join('')}<th>연간</th></tr></thead><tbody>
+    ${pcos.length ? rowsHtml : emptyRow(months.length+2, loading('companies') ? '불러오는 중…' : '등록된 협력사가 없습니다.')}
+    <tr class="hl"><td>적용률 (${S.axCo==='all' ? '협력사 합계' : esc(coName(S.axCo))})</td>${totals.map(t => `<td class="num"><b>${t.tot ? pct(t.ai,t.tot)+'%' : '–'}</b></td>`).join('')}<td class="num"><b>${yearTot.tot ? pct(yearTot.ai,yearTot.tot)+'%' : '–'}</b></td></tr>
+    <tr class="hl"><td>AI 활용 제작 (합계)</td>${totals.map(t => `<td class="num">${t.workN ? t.work+'건' : '–'}</td>`).join('')}<td class="num">${yearTot.workN ? yearTot.work+'건' : '–'}</td></tr>
   </tbody></table></div>
-  <div class="legend"><span><span class="dot st-submitted"></span>검토 대기</span><span><span class="dot st-revise"></span>보완 요청</span><span><span class="dot st-approved"></span>확인 완료</span></div>
+  <div class="legend"><span><span class="dot st-submitted"></span>검토 대기</span><span><span class="dot st-revise"></span>보완 요청</span><span><span class="dot st-approved"></span>확인 완료</span><span>회사 단위 (이관) = 개인별 내역이 없는 기존 현황판 기록</span></div></div>
 
-  <div class="sec"><div class="sec-h"><h2>월별 적용률 추이</h2></div><div class="chart">${chart}</div></div>
+  <div class="sec"><div class="sec-h"><h2>월별 적용률 추이</h2><span class="muted" style="font-size:12px">${S.axCo==='all' ? '협력사 합계' : esc(coName(S.axCo))} · 진한 막대가 기준 월</span></div><div class="chart">${chart}</div></div>
 
   <div class="sec"><div class="sec-h"><h2>제출 내역</h2>
     <div class="seg" role="group" aria-label="상태 필터">${[['pending','처리 필요'],['submitted','검토 대기'],['revise','보완 요청'],['approved','확인 완료'],['all','전체']].map(([k,l]) => `<button data-act="axf" data-k="${k}" class="${filt===k?'on':''}">${l}</button>`).join('')}</div></div>
-    <div class="tbl-wrap"><table><thead><tr><th>협력사</th><th>실적 월</th><th class="n">AI 이미지</th><th class="n">AI 활용</th><th class="n">전체</th><th class="n">적용률</th><th class="c">첨부</th><th>상태</th><th>제출</th></tr></thead><tbody>
-    ${list.length ? list.map(a => { const st = STATUS[statusOf(a)]; return `<tr class="click" data-act="ax-view" data-id="${esc(a.id)}">
-      <td>${coChip(a.companyId)}</td><td class="num">${monthLabel(a.month,true)}</td><td class="n num">${a.aiImage}</td><td class="n num">${a.aiWork ?? '–'}</td><td class="n num">${a.total}</td>
+    <div class="tbl-wrap"><table><thead><tr><th>팀원</th><th>협력사</th><th>실적 월</th><th class="n">AI 이미지</th><th class="n">AI 활용</th><th class="n">전체</th><th class="n">적용률</th><th class="c">첨부</th><th>상태</th><th>제출</th></tr></thead><tbody>
+    ${list.length ? list.map(a => { const st = STATUS[statusOf(a)], m = memberById(a.memberId); return `<tr class="click" data-act="ax-view" data-id="${esc(a.id)}">
+      <td>${a.memberId ? `<span class="who">${memberAv(m, 22)}${esc(axWho(a))}</span>` : `<span class="muted">${axWho(a)}</span>`}</td><td>${coChip(a.companyId)}</td><td class="num">${monthLabel(a.month,true)}</td><td class="n num">${a.aiImage}</td><td class="n num">${a.aiWork ?? '–'}</td><td class="n num">${a.total}</td>
       <td class="n num"><b>${pct(a.aiImage,a.total) ?? '–'}%</b></td><td class="c num">${(a.attachments||[]).length || '<span class="muted">없음</span>'}</td>
       <td><span class="chip ${st.c}">${st.l}</span></td><td><span class="who">${esc(a.submittedBy ? nameOf(a.submittedBy) : '이관 데이터')}</span><span class="t-sub num">${fmtTs(a.submittedAt)}</span></td></tr>`; }).join('')
-      : emptyRow(9, loading('ax_reports') ? '불러오는 중…' : filt==='pending' ? '<b>처리할 제출이 없습니다</b>검토 대기나 보완 요청 상태의 제출이 생기면 여기에 표시됩니다.' : '해당 상태의 제출이 없습니다.')}
+      : emptyRow(10, loading('ax_reports') ? '불러오는 중…' : filt==='pending' ? '<b>처리할 제출이 없습니다</b>검토 대기나 보완 요청 상태의 제출이 생기면 여기에 표시됩니다.' : '해당 상태의 제출이 없습니다.')}
     </tbody></table></div></div>`;
 }
 
@@ -653,20 +701,26 @@ function vacView(id){
 }
 
 /* AX */
-function axForm(coId, month){
-  const cos = writablePartnerCos();
-  if (!cos.length) { toast('실적을 제출할 수 있는 협력사가 없습니다.'); return; }
-  const co = coId && cos.some(c => c.id===coId) ? coId : (cos.find(c => c.id===lsGet('hub.lastCo')) || cos.find(c => c.id===S.myCompany) || cos[0]).id;
+function axForm(memberId, month){
+  const pm = partnerMembers().filter(m => canCo(m.companyId));
+  if (!pm.length) {
+    openModal(`${mhead('AX 실적 제출')}<div class="mb"><div class="empty"><b>협력사 팀원이 없습니다</b>실적은 협력사 팀원 개인별로 제출합니다. 먼저 ‘협력사 · 팀원’에서 디지털·기업 팀원을 추가하세요.</div></div>
+      <div class="mf"><button class="btn" data-act="close">닫기</button><a class="btn pri" href="#team" data-act="close">팀원 추가하러 가기</a></div>`); return;
+  }
+  const last = lsGet('hub.lastAxMember');
+  const mid = memberId && pm.some(m => m.id===memberId) ? memberId : (pm.find(m => m.id===last) || pm[0]).id;
   const mo = month || prevMonth();
-  openModal(`${mhead('AX 실적 제출', '월 1회, 협력사별로 제출합니다. 같은 달을 다시 제출하면 기존 내용이 수정됩니다.')}
+  const opts = partnerCos().map(c => { const ms = pm.filter(m => m.companyId===c.id);
+    return ms.length ? `<optgroup label="${esc(c.name)}">${ms.map(m => `<option value="${esc(m.id)}" ${m.id===mid?'selected':''}>${esc(m.name)}${m.role?' · '+esc(m.role):''}</option>`).join('')}</optgroup>` : ''; }).join('');
+  openModal(`${mhead('AX 실적 제출', '팀원 1명 × 월 1건씩 제출합니다. 같은 팀원·같은 달을 다시 제출하면 기존 내용이 수정됩니다.')}
   <form id="f-ax" class="mb" novalidate>
-    <div class="fr"><div class="f"><label for="a-co">협력사</label><select id="a-co" ${cos.length===1?'disabled':''}>${cos.map(c => `<option value="${esc(c.id)}" ${c.id===co?'selected':''}>${esc(c.name)}</option>`).join('')}</select></div>
+    <div class="fr"><div class="f"><label for="a-mem">팀원</label><select id="a-mem">${opts}</select></div>
       <div class="f"><label for="a-month">실적 월</label><input type="month" id="a-month" value="${mo}" max="${curMonth}" placeholder="YYYY-MM"></div></div>
     <div class="hint" id="a-state"></div>
     <div class="fr">
       <div class="f"><label for="a-ai">AI 이미지 제작 건수</label><input type="number" id="a-ai" min="0" step="1" inputmode="numeric"><span class="hint">AI로 생성해 결과물에 적용한 이미지</span></div>
       <div class="f"><label for="a-work">AI 활용 제작 건수</label><input type="number" id="a-work" min="0" step="1" inputmode="numeric"><span class="hint">기획·리터칭·카피 등 제작 과정에 AI를 쓴 작업</span></div>
-      <div class="f"><label for="a-total">전체 이미지 제작 수</label><input type="number" id="a-total" min="0" step="1" inputmode="numeric"><span class="hint">해당 월 제작한 전체 이미지</span></div>
+      <div class="f"><label for="a-total">전체 이미지 제작 수</label><input type="number" id="a-total" min="0" step="1" inputmode="numeric"><span class="hint">해당 월 본인이 제작한 전체 이미지</span></div>
     </div>
     <div class="hint" id="a-rate"></div>
     <div class="f"><label for="a-note">특이사항 <span class="muted" style="font-weight:400">(선택)</span></label><textarea id="a-note" rows="3" maxlength="2000" style="min-height:76px" placeholder="예: 상품상세 2D 아이콘 제작 건수 증가"></textarea></div>
@@ -677,15 +731,15 @@ function axForm(coId, month){
   loadAxForm();
 }
 function loadAxForm(){
-  const co = $('#a-co').value, mo = $('#a-month').value;
+  const mid = $('#a-mem').value, mo = $('#a-month').value;
   if (upl && !upl.saved && upl.fresh.size) removeFiles([...upl.fresh]);
-  const ex = S.ax.find(a => a.companyId===co && a.month===mo);
+  const ex = S.ax.find(a => a.memberId===mid && a.month===mo);
   $('#a-ai').value = ex?.aiImage ?? ''; $('#a-work').value = ex?.aiWork ?? ''; $('#a-total').value = ex?.total ?? ''; $('#a-note').value = ex?.note || '';
-  $('#a-files').innerHTML = attachField(ex?.attachments, () => `ax/${$('#a-co').value}`);
+  $('#a-files').innerHTML = attachField(ex?.attachments, () => `ax/${memberById($('#a-mem').value)?.companyId || 'etc'}`);
   hydrate($('#a-files')); bindDrop();
-  const st = ex ? statusOf(ex) : null;
-  $('#a-state').innerHTML = !ex ? '' : st==='approved' ? '<span class="chip ok">확인 완료</span> 이미 확인된 실적입니다. 수정하면 다시 검토 대기로 바뀝니다.'
-    : st==='revise' ? `<span class="chip bad">보완 요청</span> ${esc(S.reviews[ex.id]?.comment || '')}` : '<span class="chip warn">검토 대기</span> 제출된 실적을 수정합니다.';
+  const st = ex ? statusOf(ex) : null, m = memberById(mid);
+  $('#a-state').innerHTML = `${m ? coChip(m.companyId) + ' ' : ''}` + (!ex ? '새 실적' : st==='approved' ? '<span class="chip ok">확인 완료</span> 이미 확인된 실적입니다. 수정하면 다시 검토 대기로 바뀝니다.'
+    : st==='revise' ? `<span class="chip bad">보완 요청</span> ${esc(S.reviews[ex.id]?.comment || '')}` : '<span class="chip warn">검토 대기</span> 제출된 실적을 수정합니다.');
   syncRate();
 }
 function syncRate(){
@@ -694,24 +748,26 @@ function syncRate(){
 }
 async function saveAx(){
   const err = $('#f-err');
-  const co = $('#a-co').value, mo = $('#a-month').value.trim();
+  const mid = $('#a-mem').value, mo = $('#a-month').value.trim(), m = memberById(mid);
   const vals = ['a-ai','a-work','a-total'].map(i => $('#'+i).value.trim());
+  if (!m) return err.textContent = '팀원을 선택해주세요.';
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(mo)) return err.textContent = '실적 월을 YYYY-MM 형식으로 입력해주세요.';
   if (vals[0]==='' || vals[2]==='') return err.textContent = 'AI 이미지 제작 건수와 전체 이미지 제작 수는 꼭 입력해주세요.';
   const [ai, work, tot] = vals.map(v => v==='' ? null : Number(v));
   if ([ai,work,tot].some(v => v!=null && (!Number.isInteger(v) || v<0))) return err.textContent = '건수는 0 이상의 정수로 입력해주세요.';
   if (ai > tot) return err.textContent = 'AI 이미지 제작 건수가 전체 이미지 제작 수보다 많습니다.';
   if (upl.uploading) return err.textContent = '파일을 올리는 중입니다. 잠시 기다려주세요.';
-  const id = `${co}_${mo}`, ex = S.ax.find(a => a.id===id);
-  const row = {id, company_id:co, month:mo, ai_image:ai, ai_work:work, total:tot, note:$('#a-note').value.trim(), attachments:cleanFiles()};
+  const id = `${mid}_${mo}`, ex = S.ax.find(a => a.id===id);
+  const row = {id, member_id:mid, company_id:m.companyId, month:mo, ai_image:ai, ai_work:work, total:tot, note:$('#a-note').value.trim(), attachments:cleanFiles()};
   const ok = await run(sb.from('ax_reports').upsert(row, {onConflict:'id'}).select('id'), true);
-  if (ok) { upl.saved = true; removeDropped(ex?.attachments, row.attachments); lsSet('hub.lastCo', co); closeModal(); reload('ax_reports'); toast(`${coName(co)} ${monthLabel(mo)} 실적을 제출했습니다.`); }
+  if (ok) { upl.saved = true; removeDropped(ex?.attachments, row.attachments); lsSet('hub.lastAxMember', mid); closeModal(); reload('ax_reports'); toast(`${m.name} 님의 ${monthLabel(mo)} 실적을 제출했습니다.`); }
 }
 function axView(id){
   const a = S.ax.find(x => x.id===id); if (!a) return;
-  const st = statusOf(a), r = S.reviews[a.id];
+  const st = statusOf(a), r = S.reviews[a.id], m = memberById(a.memberId);
   const reviewNote = r && r.comment ? `<div class="review"><div class="row"><span class="chip ${STATUS[r.status]?.c||''}">${STATUS[r.status]?.l||''}</span><span class="muted" style="font-size:12px">${esc(nameOf(r.reviewedBy))} · ${fmtTs(r.reviewedAt)}${st==='submitted' ? ' · 이후 재제출됨' : ''}</span></div><div class="body-text" style="font-size:13px">${esc(r.comment)}</div></div>` : '';
-  openModal(`${mhead(`${esc(coName(a.companyId))} · ${monthLabel(a.month,true)} 실적`, `제출 ${esc(a.submittedBy ? nameOf(a.submittedBy) : '이관 데이터')} · ${fmtTs(a.submittedAt)}`)}
+  const title = a.memberId ? `<span class="who" style="gap:10px">${memberAv(m, 32)}${esc(axWho(a))} · ${monthLabel(a.month,true)}</span>` : `${esc(coName(a.companyId))} · ${monthLabel(a.month,true)} (회사 단위)`;
+  openModal(`${mhead(title, `${esc(coName(a.companyId))} · 제출 ${esc(a.submittedBy ? nameOf(a.submittedBy) : '이관 데이터')} · ${fmtTs(a.submittedAt)}`)}
   <div class="mb">
     <div class="row"><span class="chip ${STATUS[st].c}">${STATUS[st].l}</span></div>
     <div class="stats"><div class="stat"><span>AI 이미지 제작</span><b>${a.aiImage}</b></div><div class="stat"><span>AI 활용 제작</span><b>${a.aiWork ?? '–'}</b></div><div class="stat"><span>전체 이미지</span><b>${a.total}</b></div><div class="stat"><span>적용률</span><b>${pct(a.aiImage,a.total) ?? '–'}%</b></div></div>
@@ -722,7 +778,7 @@ function axView(id){
   </div>
   <div class="mf">
     ${S.isAdmin ? `<span class="left" id="del-zone"><button class="btn danger" data-act="ask-del">삭제</button></span>` : ''}
-    ${canCo(a.companyId) ? `<button class="btn" data-act="ax-new" data-co="${esc(a.companyId)}" data-month="${a.month}">수정</button>` : ''}
+    ${a.memberId && canW() ? `<button class="btn" data-act="ax-new" data-member="${esc(a.memberId)}" data-month="${a.month}">수정</button>` : ''}
     ${S.isAdmin ? `<button class="btn" data-act="review" data-k="revise" style="color:var(--bad)">보완 요청</button><button class="btn pri" data-act="review" data-k="approved">확인 완료</button>` : `<button class="btn ink" data-act="close">닫기</button>`}
   </div>`, true);
   delTarget = {kind:'ax', id};
@@ -753,7 +809,7 @@ function memForm(id){
     <div class="f"><label for="m-name">이름</label><input type="text" id="m-name" maxlength="40" value="${esc(m?.name||'')}"></div>
     <div class="fr"><div class="f"><label for="m-co">소속</label><select id="m-co" ${cos.length===1 || m ? 'disabled' : ''}>${cos.map(c => `<option value="${esc(c.id)}" ${(m?.companyId||lsGet('hub.lastCo')||S.myCompany)===c.id?'selected':''}>${esc(c.name)}${c.kind==='internal'?' (정규직)':''}</option>`).join('')}</select></div>
     <div class="f"><label for="m-role">직무 <span class="muted" style="font-weight:400">(선택)</span></label><input type="text" id="m-role" maxlength="40" value="${esc(m?.role||'')}" placeholder="예: 3D 디자이너"></div></div>
-    ${m ? '<div class="hint">팀원을 삭제하면 그 팀원의 휴가 기록도 함께 삭제됩니다. 소속을 바꾸려면 삭제 후 새로 추가해주세요.</div>' : ''}
+    ${m ? '<div class="hint">팀원을 삭제하면 그 팀원의 휴가 기록도 함께 삭제됩니다. AX 실적이 있는 팀원은 삭제할 수 없습니다. 소속을 바꾸려면 삭제 후 새로 추가해주세요.</div>' : ''}
     <div class="err" id="f-err"></div>
   </form>
   <div class="mf">${m ? `<span class="left" id="del-zone"><button class="btn danger" data-act="ask-del">삭제</button></span>` : ''}<button class="btn" data-act="close">취소</button><button class="btn pri" data-submit="f-mem">${m ? '저장' : '추가'}</button></div>`);
@@ -873,7 +929,9 @@ document.addEventListener('click', e => {
     case 'cal-next': S.cal.m++; if (S.cal.m>11){S.cal.m=0;S.cal.y++;} render(); break;
     case 'cal-today': S.cal = {y:now.getFullYear(), m:now.getMonth()}; render(); break;
     case 'cof': S.coFilter = k; render(); break;
-    case 'ax-new': if (canW()) axForm(el.dataset.co, el.dataset.month); break;
+    case 'ax-new': if (canW()) axForm(el.dataset.member, el.dataset.month); break;
+    case 'ax-goto': e.preventDefault(); if (el.dataset.month) S.axMonth = el.dataset.month; if (el.dataset.co) S.axCo = el.dataset.co; S.axYear = Number((el.dataset.month||curMonth).slice(0,4)); if (location.hash==='#ax') render(); else location.hash = 'ax'; break;
+    case 'axco': S.axCo = k; render(); break;
     case 'ax-view': axView(id); break;
     case 'axf': S.axFilter = k; render(); break;
     case 'review': review(k); break;
@@ -901,11 +959,12 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => {
   const id = e.target.id;
   if (id==='v-type' || id==='v-start' || id==='v-end') syncVacForm();
-  if (id==='a-co' || id==='a-month') loadAxForm();
+  if (id==='a-mem' || id==='a-month') loadAxForm();
   if (id==='upl-in') { addFiles([...e.target.files]); e.target.value = ''; }
   if (id==='m-photo' && e.target.files[0]) { pickMemPhoto(e.target.files[0]); e.target.value = ''; }
   if (id==='my-photo' && e.target.files[0]) { setMyPhoto(e.target.files[0]); e.target.value = ''; }
-  if (id==='axyear') { S.axYear = Number(e.target.value); render(); }
+  if (id==='axyear') { S.axYear = Number(e.target.value); S.axMonth = null; render(); }
+  if (id==='axmonth') { S.axMonth = e.target.value; render(); }
 });
 document.addEventListener('keydown', e => {
   if (e.key==='Escape') { if (!$('#lb').hidden) { $('#lb').hidden = true; return; } if (!$('#modal').hidden) closeModal(); }
