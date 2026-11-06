@@ -11,6 +11,7 @@ create table if not exists public.companies (
   id          text primary key check (id ~ '^[a-z0-9_-]+$'),
   name        text not null,
   sort        int  not null default 0,
+  kind        text not null default 'partner' constraint companies_kind_check check (kind in ('partner','internal')),
   created_at  timestamptz not null default now()
 );
 
@@ -31,6 +32,7 @@ create table if not exists public.profiles (
   name        text not null default '',
   role        text not null default 'pending' check (role in ('admin','partner','viewer','pending')),
   company_id  text references public.companies(id) on delete set null,
+  avatar_path text,
   created_at  timestamptz not null default now()
 );
 
@@ -40,6 +42,7 @@ create table if not exists public.members (
   name        text not null check (length(trim(name)) > 0),
   company_id  text not null references public.companies(id) on delete restrict,
   title       text not null default '',
+  photo_path  text,
   created_at  timestamptz not null default now()
 );
 
@@ -96,6 +99,14 @@ create table if not exists public.ax_reviews (
   reviewed_at timestamptz not null default now()
 );
 
+-- 이전 버전에서 업그레이드할 때를 위한 컬럼 추가 (새로 설치할 땐 아무 일도 안 함)
+alter table public.companies add column if not exists kind text not null default 'partner';
+do $$ begin
+  alter table public.companies add constraint companies_kind_check check (kind in ('partner','internal'));
+exception when duplicate_object then null; end $$;
+alter table public.profiles add column if not exists avatar_path text;
+alter table public.members  add column if not exists photo_path text;
+
 create index if not exists vacations_dates_idx on public.vacations (start_date, end_date);
 create index if not exists ax_reports_month_idx on public.ax_reports (month);
 
@@ -128,6 +139,18 @@ language sql stable security definer set search_path = public as $$
   select public.my_role() = 'admin'
       or (public.my_role() = 'partner' and public.my_company() = c)
 $$;
+
+-- 본인 프로필 사진 지정 (profiles 는 관리자만 수정 가능하므로 이 함수로만 바꿈)
+create or replace function public.set_my_avatar(p_path text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then raise exception 'not signed in'; end if;
+  if p_path is not null and p_path not like 'avatars/users/' || auth.uid()::text || '/%' then
+    raise exception 'invalid avatar path';
+  end if;
+  update public.profiles set avatar_path = p_path where id = auth.uid();
+end $$;
+grant execute on function public.set_my_avatar(text) to authenticated;
 
 -- ---------------------------------------------------------------------
 -- 3. 트리거
@@ -298,7 +321,10 @@ create policy reviews_admin on public.ax_reviews for all    to authenticated usi
 
 -- ---------------------------------------------------------------------
 -- 5. 첨부파일 저장소 (비공개 버킷, 파일당 50MB)
---    경로 규칙: notices/... (DX팀만), ax/<협력사id>/... (해당 협력사 + DX팀)
+--    경로 규칙: notices/...                 DX 관리자만
+--              ax/<그룹id>/...             해당 그룹 작성자 + DX 관리자
+--              avatars/users/<내 id>/...   본인 프로필 사진
+--              avatars/members/<그룹id>/... 해당 그룹 작성자 + DX 관리자 (팀원 명단 사진)
 -- ---------------------------------------------------------------------
 insert into storage.buckets (id, name, public, file_size_limit)
 values ('attachments', 'attachments', false, 52428800)
@@ -318,6 +344,13 @@ create policy hub_files_upload on storage.objects for insert to authenticated
       or (public.my_role() = 'partner'
           and (storage.foldername(name))[1] = 'ax'
           and (storage.foldername(name))[2] = public.my_company())
+      or (public.is_member()
+          and (storage.foldername(name))[1] = 'avatars'
+          and (storage.foldername(name))[2] = 'users'
+          and (storage.foldername(name))[3] = (select auth.uid())::text)
+      or ((storage.foldername(name))[1] = 'avatars'
+          and (storage.foldername(name))[2] = 'members'
+          and public.can_write_company((storage.foldername(name))[3]))
     )
   );
 

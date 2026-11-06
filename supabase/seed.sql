@@ -3,10 +3,11 @@
 -- schema.sql 실행 후, 아래 'YOUR_EMAIL@medialog.co.kr' 를 첫 관리자(본인) 이메일로 바꾸고 Run 하세요.
 -- =====================================================================
 
--- 협력사 (id는 내부용, 화면에는 name이 표시됩니다)
-insert into public.companies (id, name, sort) values
-  ('tribe', '디지털', 1),
-  ('corp', '기업', 2)
+-- 그룹: internal = 정규직 팀, partner = 협력사 (id는 내부용, 화면에는 name이 표시됩니다)
+insert into public.companies (id, name, sort, kind) values
+  ('dx', 'DX디자인팀', 0, 'internal'),
+  ('tribe', '디지털', 1, 'partner'),
+  ('corp', '기업', 2, 'partner')
 on conflict (id) do nothing;
 
 -- 첫 관리자 (DX디자인팀). 이후 사용자는 사이트의 '사용자 관리'에서 추가합니다.
