@@ -1331,8 +1331,9 @@ document.addEventListener('click', async e => {
       if (/database error|invalid_invite|saving new user/i.test(m) || error.status===500) return gateMsg('초대 코드가 맞지 않거나 등록되지 않은 이메일입니다. 이메일과 코드를 다시 확인해 주세요.', 'bad');
       if (/signups? not allowed|disabled/i.test(m)) return gateMsg('지금은 계정을 만들 수 없도록 설정돼 있습니다. DX디자인팀에 알려주세요.', 'bad');
       if (/password/i.test(m)) return gateMsg('비밀번호가 너무 단순합니다. 영문·숫자를 섞어 8자 이상으로 정해주세요.', 'bad');
-      if (/rate|limit|too many/i.test(m)) return gateMsg('시도가 너무 많습니다. 잠시 후 다시 해주세요.', 'bad');
-      return gateMsg(errMsg(error), 'bad');
+      if (/email rate|over_email_send|sending confirmation|error sending/i.test(m + ' ' + (error.code||''))) return gateMsg(`인증 메일 발송이 막혀 계정을 만들지 못했습니다. DX디자인팀에 알려주세요. (관리자: Supabase에서 Confirm email 끄기) [${error.code || error.status || ''}]`, 'bad');
+      if (/rate limit|too many|429/i.test(m + ' ' + (error.code||'') + ' ' + error.status)) return gateMsg(`같은 네트워크에서 시도가 몰려 잠시 막혔습니다. 5분쯤 뒤에 다시 해주세요. [${error.code || error.status || ''}]`, 'bad');
+      return gateMsg(errMsg(error) + ` [${error.code || error.status || ''}]`, 'bad');
     }
     if (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) return gateMsg('이미 비밀번호를 만든 이메일입니다. 로그인해 주세요.', 'bad');
     if (!data?.session) return gateMsg('계정을 만들었습니다. 메일함의 인증 링크를 누른 뒤 로그인해 주세요.', 'ok');
@@ -1342,7 +1343,12 @@ document.addEventListener('click', async e => {
   if (k==='pw') {
     const {error} = await sb.auth.signInWithPassword({email, password:$('#l-pw').value});
     b.disabled = false;
-    if (error) gateMsg(/invalid/i.test(error.message) ? '이메일 또는 비밀번호가 맞지 않습니다.' : errMsg(error), 'bad');
+    if (error) {
+      const m = String(error.message || '') + ' ' + (error.code || '');
+      if (/not confirmed|email_not_confirmed/i.test(m)) gateMsg('이메일 인증이 끝나지 않은 계정입니다. DX디자인팀에 알려주세요. (관리자: 사용자 삭제 후 다시 비밀번호 만들기)', 'bad');
+      else if (/rate limit|too many|429/i.test(m + ' ' + error.status)) gateMsg('같은 네트워크에서 로그인 시도가 몰려 잠시 막혔습니다. 5분쯤 뒤에 다시 해주세요.', 'bad');
+      else gateMsg(/invalid/i.test(m) ? '이메일 또는 비밀번호가 맞지 않습니다. 처음이라면 아래 ‘비밀번호 만들기’를 이용하세요.' : errMsg(error) + ` [${error.code || error.status || ''}]`, 'bad');
+    }
   } else {
     const {error} = await sb.auth.signInWithOtp({email, options:{emailRedirectTo: location.origin + location.pathname}});
     b.disabled = false;
