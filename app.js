@@ -65,7 +65,7 @@ const ts = v => v ? new Date(v).getTime() : 0;
 const uid = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
 
 const canW = () => S.isAdmin || S.role==='partner';
-const canCo = cid => S.isAdmin || (S.role==='partner' && S.myCompany===cid);
+const canCo = cid => canW();  // 작성자는 소속과 관계없이 모든 그룹을 작성 (공지만 관리자 전용)
 const coById = id => S.companies.find(c => c.id===id);
 const coIdx = id => { const i = S.companies.findIndex(c => c.id===id); return i<0 ? 5 : i%6; };
 const coColor = id => `var(--co${coIdx(id)+1})`;
@@ -462,7 +462,7 @@ function vUsers(){
   const allowedSet = new Set(S.allowed.map(a => a.email));
   const waiting = Object.values(S.profiles).filter(p => p.role==='pending' && !allowedSet.has(p.email));
   const rows = [...S.allowed].sort((a,b) => (a.role===b.role ? 0 : a.role==='admin' ? -1 : b.role==='admin' ? 1 : 0) || (a.companyId||'').localeCompare(b.companyId||'') || a.email.localeCompare(b.email));
-  return `<div class="head"><div><h1>사용자 관리</h1><p>여기에 등록된 이메일만 사이트를 볼 수 있습니다. 팀원·협력사 계정은 자기 소속의 팀원·휴가(협력사는 실적까지)만 작성할 수 있습니다.</p></div>
+  return `<div class="head"><div><h1>사용자 관리</h1><p>여기에 등록된 이메일만 사이트를 볼 수 있습니다. 작성자는 공지사항을 뺀 팀원·휴가·AX 실적·첨부를 모두 올릴 수 있습니다.</p></div>
     <button class="btn pri" data-act="user-new">+ 사용자 등록</button></div>
   ${waiting.length ? `<div class="sec" style="margin-top:0"><div class="sec-h"><h2>승인 대기</h2><span class="muted" style="font-size:12px">로그인했지만 아직 등록되지 않은 계정</span></div>
     <div class="tbl-wrap"><table><thead><tr><th>이메일</th><th>가입일</th><th></th></tr></thead><tbody>
@@ -656,7 +656,7 @@ function vacView(id){
 function axForm(coId, month){
   const cos = writablePartnerCos();
   if (!cos.length) { toast('실적을 제출할 수 있는 협력사가 없습니다.'); return; }
-  const co = coId && canCo(coId) ? coId : (cos.find(c => c.id===lsGet('hub.lastCo')) || cos[0]).id;
+  const co = coId && cos.some(c => c.id===coId) ? coId : (cos.find(c => c.id===lsGet('hub.lastCo')) || cos.find(c => c.id===S.myCompany) || cos[0]).id;
   const mo = month || prevMonth();
   openModal(`${mhead('AX 실적 제출', '월 1회, 협력사별로 제출합니다. 같은 달을 다시 제출하면 기존 내용이 수정됩니다.')}
   <form id="f-ax" class="mb" novalidate>
@@ -751,7 +751,7 @@ function memForm(id){
   <form id="f-mem" class="mb" novalidate>
     <div class="f"><span class="lab">프로필 사진 <span class="muted" style="font-weight:400">(선택)</span></span><div class="row" id="m-photo-wrap" style="gap:12px"></div></div>
     <div class="f"><label for="m-name">이름</label><input type="text" id="m-name" maxlength="40" value="${esc(m?.name||'')}"></div>
-    <div class="fr"><div class="f"><label for="m-co">소속</label><select id="m-co" ${cos.length===1 || m ? 'disabled' : ''}>${cos.map(c => `<option value="${esc(c.id)}" ${(m?.companyId||lsGet('hub.lastCo'))===c.id?'selected':''}>${esc(c.name)}${c.kind==='internal'?' (정규직)':''}</option>`).join('')}</select></div>
+    <div class="fr"><div class="f"><label for="m-co">소속</label><select id="m-co" ${cos.length===1 || m ? 'disabled' : ''}>${cos.map(c => `<option value="${esc(c.id)}" ${(m?.companyId||lsGet('hub.lastCo')||S.myCompany)===c.id?'selected':''}>${esc(c.name)}${c.kind==='internal'?' (정규직)':''}</option>`).join('')}</select></div>
     <div class="f"><label for="m-role">직무 <span class="muted" style="font-weight:400">(선택)</span></label><input type="text" id="m-role" maxlength="40" value="${esc(m?.role||'')}" placeholder="예: 3D 디자이너"></div></div>
     ${m ? '<div class="hint">팀원을 삭제하면 그 팀원의 휴가 기록도 함께 삭제됩니다. 소속을 바꾸려면 삭제 후 새로 추가해주세요.</div>' : ''}
     <div class="err" id="f-err"></div>
@@ -818,7 +818,7 @@ function userForm(email, presetEmail){
     <div class="f"><label for="u-name">이름</label><input type="text" id="u-name" maxlength="40" value="${esc(a?.name||'')}" placeholder="화면에 표시될 이름"></div>
     <div class="fr"><div class="f"><label for="u-role">권한</label><select id="u-role" ${self?'disabled':''}>${[['partner','작성자 (소속 데이터만)'],['admin','DX 관리자 (전체)'],['viewer','열람 전용']].map(([r,l]) => `<option value="${r}" ${(a?.role||'partner')===r?'selected':''}>${l}</option>`).join('')}</select></div>
       <div class="f"><label for="u-co">소속</label><select id="u-co"><option value="">없음</option>${[...S.companies].sort((x,y) => (x.kind==='internal'?0:1)-(y.kind==='internal'?0:1)).map(c => `<option value="${esc(c.id)}" ${a?.companyId===c.id?'selected':''}>${esc(c.name)}${c.kind==='internal'?' (정규직)':' (협력사)'}</option>`).join('')}</select></div></div>
-    <div class="hint">작성자는 소속 그룹의 팀원·휴가를 작성하고, 협력사 소속이면 AX 실적도 제출합니다. 정규직 소속이면 ‘팀원’, 협력사 소속이면 ‘협력사’로 표시됩니다. DX 관리자는 모든 메뉴를 관리합니다.${self ? ' 본인 계정의 권한은 바꿀 수 없습니다.' : ''}</div>
+    <div class="hint">작성자는 공지사항을 뺀 팀원·휴가·AX 실적·첨부를 모두 올리고 고칠 수 있습니다. 소속은 표시용이며, 정규직 소속이면 ‘팀원’, 협력사 소속이면 ‘협력사’로 보입니다. DX 관리자는 여기에 더해 공지 작성, 실적 검토, 그룹·사용자 관리를 합니다.${self ? ' 본인 계정의 권한은 바꿀 수 없습니다.' : ''}</div>
     <div class="err" id="f-err"></div>
   </form>
   <div class="mf">${a && !self ? `<span class="left" id="del-zone"><button class="btn danger" data-act="ask-del">접근 해제</button></span>` : ''}<button class="btn" data-act="close">취소</button><button class="btn pri" data-submit="f-user">${a ? '저장' : '등록'}</button></div>`);
@@ -830,7 +830,7 @@ async function saveUser(){
   const email = (editing || $('#u-email').value).trim().toLowerCase();
   const role = $('#u-role').value, companyId = $('#u-co').value || null;
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return $('#f-err').textContent = '이메일 형식을 확인해주세요.';
-  if (role==='partner' && !companyId) return $('#f-err').textContent = '작성자 권한은 소속을 선택해야 합니다.';
+  if (role==='partner' && !companyId) return $('#f-err').textContent = '작성자는 소속을 선택해주세요. (표시용)';
   if (!editing && S.allowed.some(a => a.email===email)) return $('#f-err').textContent = '이미 등록된 이메일입니다.';
   const row = {email, name:$('#u-name').value.trim(), role, company_id: role==='partner' ? companyId : (role==='admin' ? null : companyId)};
   const ok = await run(sb.from('allowed_emails').upsert(row, {onConflict:'email'}).select('email'), true);

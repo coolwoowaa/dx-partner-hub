@@ -133,11 +133,11 @@ language sql stable security definer set search_path = public as $$
   select public.my_role() in ('admin','partner','viewer')
 $$;
 
--- DX팀(admin)은 전부, 협력사(partner)는 자기 회사 데이터만 쓸 수 있음
+-- 작성 권한: DX 관리자(admin)와 작성자(partner)는 소속과 관계없이 모든 그룹의
+-- 팀원·휴가·AX 실적을 작성할 수 있음 (공지·검토·그룹·사용자 관리는 admin 전용)
 create or replace function public.can_write_company(c text) returns boolean
 language sql stable security definer set search_path = public as $$
-  select public.my_role() = 'admin'
-      or (public.my_role() = 'partner' and public.my_company() = c)
+  select public.my_role() in ('admin','partner')
 $$;
 
 -- 본인 프로필 사진 지정 (profiles 는 관리자만 수정 가능하므로 이 함수로만 바꿈)
@@ -322,9 +322,9 @@ create policy reviews_admin on public.ax_reviews for all    to authenticated usi
 -- ---------------------------------------------------------------------
 -- 5. 첨부파일 저장소 (비공개 버킷, 파일당 50MB)
 --    경로 규칙: notices/...                 DX 관리자만
---              ax/<그룹id>/...             해당 그룹 작성자 + DX 관리자
+--              ax/...                      작성자 + DX 관리자
 --              avatars/users/<내 id>/...   본인 프로필 사진
---              avatars/members/<그룹id>/... 해당 그룹 작성자 + DX 관리자 (팀원 명단 사진)
+--              avatars/members/...         작성자 + DX 관리자 (팀원 명단 사진)
 -- ---------------------------------------------------------------------
 insert into storage.buckets (id, name, public, file_size_limit)
 values ('attachments', 'attachments', false, 52428800)
@@ -342,15 +342,12 @@ create policy hub_files_upload on storage.objects for insert to authenticated
     bucket_id = 'attachments' and (
       public.is_admin()
       or (public.my_role() = 'partner'
-          and (storage.foldername(name))[1] = 'ax'
-          and (storage.foldername(name))[2] = public.my_company())
+          and (storage.foldername(name))[1] in ('ax','avatars')
+          and coalesce((storage.foldername(name))[2], '') <> 'users')
       or (public.is_member()
           and (storage.foldername(name))[1] = 'avatars'
           and (storage.foldername(name))[2] = 'users'
           and (storage.foldername(name))[3] = (select auth.uid())::text)
-      or ((storage.foldername(name))[1] = 'avatars'
-          and (storage.foldername(name))[2] = 'members'
-          and public.can_write_company((storage.foldername(name))[3]))
     )
   );
 
