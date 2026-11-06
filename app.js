@@ -23,7 +23,14 @@ const ROLES = {admin:'DX 관리자', partner:'협력사', viewer:'열람 전용'
 const DOW = ['일','월','화','수','목','금','토'];
 const BUCKET = 'attachments';
 const MAX_FILE = 50 * 1048576;
-const ROUTES = ['home','notice','leave','ax','team','users','account'];
+const ROUTES = ['home','notice','leave','ax','aiimg','team','users','account'];
+const PARTS = {design:'디자인', publishing:'퍼블리싱', common:'공통'};
+const PART_HUE = {design:'blue', publishing:'teal', common:'orange'};
+const MEMBER_PARTS = {design:'디자인', publishing:'퍼블리싱', etc:'기타'};
+const P_STATUS = {idea:{l:'아이디어',h:'gray'}, test:{l:'테스트',h:'blue'}, doing:{l:'진행 중',h:'purple'}, done:{l:'완료',h:'green'}};
+const P_CAT = {case:{l:'활용사례',h:'purple'}, knowhow:{l:'노하우',h:'brown'}, output:{l:'산출물',h:'teal'}, study:{l:'학습자료',h:'yellow'}, guide:{l:'가이드',h:'green'}, meeting:{l:'회의·일정',h:'gray'}};
+const P_PRI = {core:{l:'핵심',h:'red'}, high:{l:'중요',h:'yellow'}, normal:{l:'보통',h:'gray'}};
+const TOOLS = [['Claude','orange'],['Claude Design','orange'],['Claude Code','brown'],['ChatGPT','blue'],['ChatGPT Work','blue'],['Codex','gray'],['Figma Make','purple'],['Gemini','green'],['Midjourney','teal'],['Firefly','red']];
 
 /* ---------- supabase ---------- */
 const cfg = window.HUB_CONFIG || {};
@@ -34,10 +41,11 @@ const sb = configured && window.supabase ? window.supabase.createClient(cfg.SUPA
 const now = new Date();
 const S = {
   route:'home', session:null, me:null, role:'pending', myCompany:null, isAdmin:false,
-  notices:[], vacations:[], members:[], companies:[], ax:[], reviews:{}, profiles:{}, allowed:[],
+  notices:[], vacations:[], members:[], companies:[], ax:[], reviews:{}, profiles:{}, allowed:[], posts:[],
   loaded:{}, loadErr:false,
   cal:{y:now.getFullYear(), m:now.getMonth()}, coFilter:'all',
-  axYear:now.getFullYear(), axMonth:null, axCo:'all', axFilter:'pending', noticeQ:'', noticeCat:'all'
+  axYear:now.getFullYear(), axMonth:null, axCo:'all', axFilter:'pending', noticeQ:'', noticeCat:'all',
+  postPart:'all', postWho:'all', postView:'all', postQ:'', homeDay:null, homeNotice:'all'
 };
 
 /* ---------- helpers ---------- */
@@ -77,6 +85,14 @@ const partnerCos = () => S.companies.filter(c => c.kind !== 'internal');
 const writablePartnerCos = () => partnerCos().filter(c => canCo(c.id));
 const isPartnerAx = a => !isInternal(a.companyId);
 const partnerMembers = () => S.members.filter(m => !isInternal(m.companyId)).sort((a,b) => (coById(a.companyId)?.sort||0) - (coById(b.companyId)?.sort||0) || a.name.localeCompare(b.name,'ko'));
+const imgMembers = () => partnerMembers().filter(m => (m.part || 'design') === 'design');
+const toolHue = t => (TOOLS.find(x => x[0]===t) || [0,'teal'])[1];
+const tint = (label, h, extra='') => `<span class="chip tint h-${h}" ${extra}>${esc(label)}</span>`;
+const toolChips = (tools, max) => { const l = tools || []; const shown = max ? l.slice(0, max) : l; return shown.map(t => tint(t, toolHue(t))).join('') + (max && l.length > max ? `<span class="chip">+${l.length-max}</span>` : ''); };
+const canEditPost = p => S.isAdmin || (S.role==='partner' && p.createdBy===S.me?.id);
+const byUpdated = (a,b) => ts(b.updatedAt) - ts(a.updatedAt);
+const linkify = t => esc(t).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+const shortDate = d => d ? `${d.slice(2,4)}.${d.slice(5,7)}.${d.slice(8,10)}` : '';
 const axWho = a => a.memberId ? (memberById(a.memberId)?.name || '삭제된 팀원') : '회사 단위 (이관)';
 const sumAx = list => list.reduce((t,a) => ({ai:t.ai+(+a.aiImage||0), tot:t.tot+(+a.total||0), work:t.work+(+a.aiWork||0), workN:t.workN+(a.aiWork!=null?1:0), n:t.n+1}), {ai:0, tot:0, work:0, workN:0, n:0});
 const roleLabel = (role, cid) => role==='partner' ? (isInternal(cid) ? '팀원' : '협력사') : ROLES[role];
@@ -126,7 +142,8 @@ async function run(q, expectRows){
 const MAP = {
   companies: r => ({id:r.id, name:r.name, sort:r.sort, kind:r.kind || 'partner'}),
   profiles:  r => ({id:r.id, email:r.email, name:r.name, role:r.role, companyId:r.company_id, avatarPath:r.avatar_path, createdAt:r.created_at}),
-  members:   r => ({id:r.id, name:r.name, companyId:r.company_id, role:r.title, photoPath:r.photo_path}),
+  members:   r => ({id:r.id, name:r.name, companyId:r.company_id, role:r.title, photoPath:r.photo_path, part:r.part || 'design'}),
+  ax_posts:  r => ({id:r.id, title:r.title, summary:r.summary, body:r.body, part:r.part, companyId:r.company_id, status:r.status, usable:r.usable, tools:r.tools||[], category:r.category, priority:r.priority, start:r.start_date, end:r.end_date, attachments:r.attachments||[], createdBy:r.created_by, createdAt:r.created_at, updatedAt:r.updated_at}),
   notices:   r => ({id:r.id, title:r.title, body:r.body, category:r.category, pinned:r.pinned, attachments:r.attachments||[], createdBy:r.created_by, createdAt:r.created_at, updatedAt:r.updated_at}),
   vacations: r => ({id:r.id, memberId:r.member_id, companyId:r.company_id, type:r.type, start:r.start_date, end:r.end_date, memo:r.memo, createdBy:r.created_by, createdAt:r.created_at}),
   ax_reports:r => ({id:r.id, companyId:r.company_id, memberId:r.member_id, month:r.month, aiImage:r.ai_image, aiWork:r.ai_work, total:r.total, note:r.note, attachments:r.attachments||[], submittedBy:r.submitted_by, submittedAt:r.submitted_at, createdAt:r.created_at}),
@@ -150,6 +167,7 @@ async function load(table){
     case 'vacations': S.vacations = rows; break;
     case 'ax_reports': S.ax = rows; break;
     case 'ax_reviews': { const r = {}; rows.forEach(x => r[x.id] = x); S.reviews = r; break; }
+    case 'ax_posts': S.posts = rows; break;
     case 'allowed_emails': S.allowed = rows; break;
   }
   S.loaded[table] = true;
@@ -158,7 +176,7 @@ async function load(table){
 const reloadT = {};
 function reload(table){ clearTimeout(reloadT[table]); reloadT[table] = setTimeout(() => load(table), 250); }
 function loadAll(){
-  ['companies','profiles','members','notices','vacations','ax_reports','ax_reviews'].forEach(load);
+  ['companies','profiles','members','notices','vacations','ax_reports','ax_reviews','ax_posts'].forEach(load);
   if (S.isAdmin) load('allowed_emails');
   sb.channel('hub-changes')
     .on('postgres_changes', {event:'*', schema:'public'}, p => { if (MAP[p.table]) reload(p.table); })
@@ -245,8 +263,9 @@ function doRender(){
   cnt.hidden = !(S.isAdmin && pc); cnt.textContent = pc;
   $('#me').innerHTML = `${userAv(S.me.id, 32)}<div><b>${esc(S.me.name || S.me.email)}</b><small>${roleLabel(S.role, S.myCompany)}${S.myCompany ? ' · ' + esc(coName(S.myCompany)) : ''}</small></div>`;
   hydrate($('#me'));
-  const views = {home:vHome, notice:vNotice, leave:vLeave, ax:vAx, team:vTeam, users:vUsers, account:vAccount};
+  const views = {home:vHome, notice:vNotice, leave:vLeave, ax:vAxBoard, aiimg:vAx, team:vTeam, users:vUsers, account:vAccount};
   const v = $('#view');
+  v.classList.toggle('dash', S.route==='home');
   v.innerHTML = banner() + (views[S.route] || vHome)();
   if (S.route==='notice') renderNoticeList();
   hydrate(v);
@@ -259,7 +278,13 @@ function banner(){
 const loading = t => !S.loaded[t];
 const emptyRow = (cols, html) => `<tr><td colspan="${cols}"><div class="empty">${html}</div></td></tr>`;
 
-/* ---------- HOME ---------- */
+/* ---------- HOME (dashboard) ---------- */
+const ICONS = {
+  cal: '<svg viewBox="0 0 64 64" aria-hidden="true"><rect x="8" y="14" width="48" height="42" rx="11" fill="currentColor" opacity=".22"/><rect x="8" y="14" width="48" height="15" rx="7.5" fill="currentColor" opacity=".55"/><rect x="18" y="7" width="6" height="13" rx="3" fill="currentColor"/><rect x="40" y="7" width="6" height="13" rx="3" fill="currentColor"/><circle cx="23" cy="41" r="4.5" fill="currentColor"/><circle cx="41" cy="41" r="4.5" fill="currentColor" opacity=".45"/></svg>',
+  spark: '<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M30 6c2 13 7 19 22 22-15 3-20 9-22 22-2-13-7-19-22-22 15-3 20-9 22-22z" fill="currentColor" opacity=".8"/><path d="M50 36c1 6 3 9 9 10-6 1-8 4-9 10-1-6-3-9-9-10 6-1 8-4 9-10z" fill="currentColor" opacity=".4"/></svg>',
+  image: '<svg viewBox="0 0 64 64" aria-hidden="true"><rect x="6" y="12" width="52" height="42" rx="11" fill="currentColor" opacity=".22"/><circle cx="22" cy="27" r="6" fill="currentColor" opacity=".7"/><path d="M10 50l15-15 9 9 8-7 14 13z" fill="currentColor" opacity=".75"/></svg>',
+  check: '<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M10 14a8 8 0 0 1 8-8h28a8 8 0 0 1 8 8v24a8 8 0 0 1-8 8H30l-12 10v-10h0a8 8 0 0 1-8-8z" fill="currentColor" opacity=".25"/><path d="M21 26l7 7 15-15" stroke="currentColor" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+};
 function weekDays(){
   const d = parse(TODAY), g = d.getDay();
   const mon = addDays(d, g===0 ? 1 : g===6 ? 2 : 1-g);
@@ -270,45 +295,79 @@ function lvBtn(v){
   const m = memberById(v.memberId), t = TYPES[v.type] || TYPES.etc, cid = m?.companyId || v.companyId;
   return `<button class="lv co" style="--c:${coColor(cid)}" data-act="vac-view" data-id="${esc(v.id)}" title="${esc((m?.name||'삭제된 팀원')+' · '+coName(cid)+' · '+t.label)}">${memberAv(m, 16)}<b>${esc(m?.name || '삭제된 팀원')}</b> <span class="ty">${t.short}</span></button>`;
 }
+function dayEvents(day){
+  const ev = [];
+  if (HOLIDAYS[day]) ev.push({k:'종일', html:`<b style="color:var(--bad)">${HOLIDAYS[day]}</b>`});
+  if (!isOff(day)) vacOn(day).forEach(v => { const m = memberById(v.memberId), t = TYPES[v.type] || TYPES.etc;
+    ev.push({k: v.type==='am' ? '오전' : v.type==='pm' ? '오후' : v.type==='quarter' ? '2시간' : '종일', html:`<button class="tl-btn" data-act="vac-view" data-id="${esc(v.id)}">${memberAv(m, 18)}<b>${esc(m?.name || '삭제된 팀원')}</b> ${t.label}<span class="muted"> · ${esc(coName(m?.companyId || v.companyId))}</span></button>`}); });
+  S.posts.filter(p => p.start===day || p.end===day).forEach(p => ev.push({k: p.end===day ? '마감' : '시작', html:`<button class="tl-btn" data-act="post-view" data-id="${esc(p.id)}">${tint('AX', PART_HUE[p.part])} ${esc(p.title)}</button>`}));
+  return ev;
+}
 function vHome(){
-  const days = weekDays();
-  const todayCnt = vacOn(TODAY).length;
-  const weekSet = new Set(); days.forEach(d => vacOn(d).forEach(v => weekSet.add(v.id)));
-  const pc = pendingCount(), rm = prevMonth();
-  const recent = S.notices.filter(n => (Date.now() - ts(n.createdAt)) < 7*864e5).length;
-  const pcos = partnerCos(), pm = partnerMembers();
-  const axRm = S.ax.filter(a => isPartnerAx(a) && a.month===rm);
+  const hello = S.me.name || S.me.email.split('@')[0];
+  const rm = prevMonth();
+  const todayVac = vacOn(TODAY);
+  const monthPosts = S.posts.filter(p => ymd(new Date(p.createdAt)).slice(0,7) === curMonth);
+  const usableCnt = S.posts.filter(p => p.status==='done' && p.usable).length;
+  const doingCnt = S.posts.filter(p => p.status==='doing' || p.status==='test').length;
+  const pcos = partnerCos(), dm = imgMembers();
+  const axRm = S.ax.filter(a => isPartnerAx(a) && a.month===rm), smRm = sumAx(axRm);
+  const pc = pendingCount();
   const subMem = new Set(axRm.filter(a => a.memberId).map(a => a.memberId));
   const legacyRm = pcos.length && pcos.every(c => axRm.some(a => a.companyId===c.id && !a.memberId));
-  const notices = sortedNotices().slice(0,6);
+
+  const tile = (cls, href, pill, big, cap, icon) => `<a class="ptile ${cls}" href="${href}"><span class="pill">${pill}</span><b class="num">${big}</b><small>${cap}</small>${ICONS[icon]}</a>`;
+  const tiles = [
+    tile('t-blue', '#leave', '오늘 휴가', `${todayVac.length}명`, todayVac.length ? esc(todayVac.slice(0,3).map(v => memberById(v.memberId)?.name || '').join(', ')) + (todayVac.length > 3 ? ` 외 ${todayVac.length-3}명` : '') : '오늘은 모두 출근해요', 'cal'),
+    tile('t-purple', '#ax', '이번 달 AX 실적', `${monthPosts.length}건`, `활용 가능 사례 ${usableCnt}건 · 진행 중 ${doingCnt}건`, 'spark'),
+    tile('t-peach', '#aiimg', `${Number(rm.slice(5))}월 AI 이미지 적용률`, smRm.n ? `${pct(smRm.ai, smRm.tot) ?? '–'}%` : '–', smRm.n ? `AI ${smRm.ai} / 전체 ${smRm.tot} · 협력사 디자인` : '아직 제출된 실적이 없어요', 'image'),
+    S.isAdmin
+      ? tile('t-yellow', '#aiimg', '검토 대기', `${pc}건`, pc ? 'AI 이미지 증빙을 확인해주세요' : '확인할 증빙이 없어요', 'check')
+      : tile('t-yellow', '#notice', '최근 7일 공지', `${S.notices.filter(n => (Date.now() - ts(n.createdAt)) < 7*864e5).length}건`, `전체 공지 ${S.notices.length}건`, 'check')
+  ].join('');
+
+  const recent = [...S.posts].sort(byUpdated).slice(0, 3);
+  const axCards = recent.length ? recent.map(p => `<button class="axcard p-${PART_HUE[p.part]}" data-act="post-view" data-id="${esc(p.id)}">
+      <span class="axcard-top"><span>${PARTS[p.part]} · ${P_CAT[p.category]?.l || ''}</span><span class="st">${P_STATUS[p.status]?.l || ''}</span></span>
+      <b class="axcard-title">${esc(p.title)}</b>
+      <span class="axcard-sum">${esc(p.summary || '')}</span>
+      <span class="axcard-foot">${who(p.createdBy)}<span class="num">${fmtTs(p.updatedAt)}</span></span>
+      <span class="axcard-tools">${toolChips(p.tools, 3)}</span></button>`).join('')
+    : `<div class="axcard empty-card"><b>아직 올라온 AX 실적이 없어요</b><span class="muted">디자인·퍼블리싱에서 AI를 활용한 사례, 노하우, 산출물을 자유롭게 올려주세요.</span>${canW() ? '<button class="btn pri sm" data-act="post-new">첫 AX 실적 올리기</button>' : ''}</div>`;
+
+  // week card (Sun..Sat of this week)
+  const t0 = parse(TODAY), sun = addDays(t0, -t0.getDay());
+  const week = [0,1,2,3,4,5,6].map(i => ymd(addDays(sun, i)));
+  const sel = S.homeDay && week.includes(S.homeDay) ? S.homeDay : TODAY, sd = parse(sel);
+  const evs = dayEvents(sel);
+
+  const nlist = sortedNotices().filter(n => S.homeNotice==='all' || n.category==='must').slice(0, 5);
+
   return `
-  <div class="head"><div><h1>디지털/기업 허브</h1><p>${now.getFullYear()}년 ${now.getMonth()+1}월 ${now.getDate()}일 (${DOW[now.getDay()]}) · 공지, 휴가 일정, AX 실적을 한곳에서 관리합니다.</p></div>
-    <div class="row">${canW() ? `<button class="btn" data-act="vac-new">휴가 등록</button><button class="btn pri" data-act="ax-new">AX 실적 제출</button>` : ''}</div></div>
-  <div class="tiles">
-    <a class="tile" href="#leave"><span>오늘 휴가</span><b>${todayCnt}명</b><small>이번 주 ${weekSet.size}건</small></a>
-    <a class="tile ${pc?'alert':''}" href="#ax"><span>첨부 검토 대기</span><b>${pc}건</b><small>${S.isAdmin ? 'DX팀 확인이 필요한 제출' : '확인 전 제출'}</small></a>
-    <a class="tile" href="#ax" data-act="ax-goto" data-month="${rm}"><span>${monthLabel(rm)} 실적 제출</span><b>${legacyRm ? '완료' : `${subMem.size}/${pm.length}명`}</b><small>${legacyRm ? '기존 현황판의 회사 단위 기록' : !pm.length ? '협력사 팀원을 먼저 등록하세요' : pm.length-subMem.size ? `미제출 ${pm.length-subMem.size}명` : '모든 팀원 제출'}</small></a>
-    <a class="tile" href="#notice"><span>최근 7일 공지</span><b>${recent}건</b><small>전체 ${S.notices.length}건</small></a>
-  </div>
+  <div class="dash-head"><div><p class="muted" style="margin:0 0 2px">${now.getFullYear()}년 ${now.getMonth()+1}월 ${now.getDate()}일 ${DOW[now.getDay()]}요일</p><h1>안녕하세요, ${esc(hello)}님</h1></div>
+    <div class="row">${canW() ? `<button class="btn" data-act="vac-new">휴가 등록</button><button class="btn" data-act="ax-new">AI 이미지 제출</button><button class="btn pri" data-act="post-new">+ AX 실적 올리기</button>` : ''}</div></div>
 
-  <div class="sec"><div class="sec-h"><h2>이번 주 휴가</h2><a class="more" href="#leave">달력 보기 →</a></div>
-    <div class="box week">${days.map(day => {
-      const list = vacOn(day), dd = parse(day);
-      return `<div class="d ${day===TODAY?'today':''}"><div class="dh"><span><b>${dd.getDate()}</b> ${DOW[dd.getDay()]}</span>${HOLIDAYS[day]?`<span class="hol">${HOLIDAYS[day]}</span>`:''}</div>
-        ${list.length ? list.map(lvBtn).join('') : `<span class="muted" style="font-size:11.5px">${HOLIDAYS[day] ? '' : loading('vacations') ? '불러오는 중…' : '휴가자 없음'}</span>`}</div>`;
-    }).join('')}</div></div>
+  <div class="ptiles">${tiles}</div>
 
-  <div class="sec grid2">
-    <div><div class="sec-h"><h2>공지사항</h2><a class="more" href="#notice">전체 보기 →</a></div>
-      <div class="box list">${notices.length ? notices.map(noticeLi).join('') :
-        `<div class="empty">${loading('notices') ? '불러오는 중…' : `<b>등록된 공지가 없습니다</b>${S.isAdmin ? '공지사항 메뉴에서 첫 공지를 작성하세요.' : 'DX디자인팀이 공지를 올리면 여기에 표시됩니다.'}`}</div>`}</div></div>
-    <div><div class="sec-h"><h2>${monthLabel(rm, true)} AX 실적</h2><a class="more" href="#ax">현황판 →</a></div>
-      <div class="box list">${pcos.length ? [...pcos.map(c => {
-        const l = axRm.filter(a => a.companyId===c.id), sm = sumAx(l);
-        const mem = pm.filter(m => m.companyId===c.id), sub = mem.filter(m => subMem.has(m.id)).length;
-        const pend = l.filter(a => statusOf(a)==='submitted').length;
-        return `<div class="li" data-act="ax-goto" data-month="${rm}" data-co="${esc(c.id)}">${coChip(c.id)}<span class="grow"><span class="ttl num">${sm.n ? `적용률 ${pct(sm.ai,sm.tot) ?? '–'}% · AI ${sm.ai} / 전체 ${sm.tot}` : '<span class="muted">제출된 실적 없음</span>'}</span><span class="meta num">${l.some(a => !a.memberId) ? '회사 단위 기록' : mem.length ? `제출 ${sub}/${mem.length}명` : '등록된 팀원 없음'}${pend ? ` · 검토 대기 ${pend}건` : ''}</span></span>${pend ? '<span class="chip warn">검토 대기</span>' : sm.n ? '<span class="chip ok">제출</span>' : ''}</div>`;
-      }), (() => { const sm = sumAx(axRm); return sm.n ? `<div class="li" style="cursor:default;background:var(--hl)"><span class="chip">협력사 합계</span><span class="grow"><span class="ttl num">적용률 ${pct(sm.ai,sm.tot) ?? '–'}% · AI ${sm.ai} / 전체 ${sm.tot}</span></span></div>` : ''; })()].join('') : `<div class="empty">${loading('companies') ? '불러오는 중…' : '<b>등록된 협력사가 없습니다</b>협력사 · 팀원 메뉴에서 추가하세요.'}</div>`}</div></div>
+  <div class="dash-grid">
+    <section class="dcard span-8"><div class="dcard-h"><h2>최근 AX 실적</h2><a class="more" href="#ax">더보기</a></div>
+      <div class="axcards">${axCards}</div></section>
+
+    <section class="dcard span-4"><div class="dcard-h"><h2>${sel===TODAY ? '오늘' : `${sd.getMonth()+1}월 ${sd.getDate()}일`}, ${DOW[sd.getDay()]}요일</h2><a class="more" href="#leave">휴가 달력</a></div>
+      <div class="wkstrip">${week.map(d => { const dd = parse(d), g = dd.getDay(); const has = dayEvents(d).length;
+        return `<button class="wkday ${d===TODAY?'today':''} ${d===sel?'sel':''} ${g===0||HOLIDAYS[d]?'red':''}" data-act="hday" data-d="${d}" aria-pressed="${d===sel}"><small>${DOW[g]}</small><span class="num">${dd.getDate()}</span><i class="${has?'on':''}"></i></button>`; }).join('')}</div>
+      <ul class="tl">${evs.length ? evs.map(e => `<li><span class="tl-k">${e.k}</span><span class="tl-v">${e.html}</span></li>`).join('') : `<li class="tl-empty">${loading('vacations') ? '불러오는 중…' : '휴가·일정이 없는 날이에요'}</li>`}</ul></section>
+
+    <section class="dcard span-7"><div class="dcard-h"><div class="tabs" role="tablist"><button role="tab" class="${S.homeNotice==='all'?'on':''}" data-act="hnotice" data-k="all" aria-selected="${S.homeNotice==='all'}">공지사항</button><button role="tab" class="${S.homeNotice==='must'?'on':''}" data-act="hnotice" data-k="must" aria-selected="${S.homeNotice==='must'}">필독</button></div><a class="more" href="#notice">더보기</a></div>
+      <ul class="nlist">${nlist.length ? nlist.map(n => `<li><button data-act="notice-view" data-id="${esc(n.id)}"><span class="nt">${n.pinned ? '<span class="chip acc" style="height:18px;font-size:10.5px">고정</span>' : ''}${esc(n.title)}${(Date.now() - ts(n.createdAt)) < 3*864e5 ? '<span class="nbadge">N</span>' : ''}</span><span class="num muted">${fmtTs(n.createdAt)}</span></button></li>`).join('')
+        : `<li class="tl-empty">${loading('notices') ? '불러오는 중…' : S.homeNotice==='must' ? '필독 공지가 없어요' : '등록된 공지가 없어요'}</li>`}</ul></section>
+
+    <section class="dcard span-5"><div class="dcard-h"><h2>${Number(rm.slice(5))}월 AI 이미지 제작</h2><a class="more" href="#aiimg" data-act="ax-goto" data-month="${rm}">현황판</a></div>
+      ${S.isAdmin && pc ? `<div class="callout"><span>검토를 기다리는 AI 이미지 실적이</span><b class="num">${pc}건</b><span>있어요!</span></div>`
+        : `<div class="callout calm"><span>${legacyRm ? '기존 현황판의 회사 단위 기록이에요' : `디자이너 제출 <b class="num">${subMem.size}/${dm.length}명</b>`}</span></div>`}
+      <div class="bars">${pcos.map(c => { const sm = sumAx(axRm.filter(a => a.companyId===c.id)), r = pct(sm.ai, sm.tot);
+        return `<button class="barrow" data-act="ax-goto" data-month="${rm}" data-co="${esc(c.id)}"><span class="bn"><span class="dot" style="color:${coColor(c.id)}"></span> ${esc(c.name)}</span><span class="bt"><span style="width:${r||0}%;background:${coColor(c.id)}"></span></span><span class="bv num">${r==null ? '–' : r+'%'}</span></button>`; }).join('')}
+        ${smRm.n ? `<div class="barrow total"><span class="bn">협력사 합계</span><span class="bt"><span style="width:${pct(smRm.ai,smRm.tot)||0}%"></span></span><span class="bv num">${pct(smRm.ai,smRm.tot)}%</span></div>` : ''}</div></section>
   </div>`;
 }
 
@@ -394,7 +453,116 @@ function vLeave(){
   </div>`;
 }
 
-/* ---------- AX ---------- */
+/* ---------- AX BOARD (free-form) ---------- */
+function postCard(p){
+  return `<button class="pcard" data-act="post-view" data-id="${esc(p.id)}">
+    <span class="pcard-t">${tint(PARTS[p.part], PART_HUE[p.part])}<b>${esc(p.title)}</b></span>
+    <span class="pcard-s">${esc(p.summary || '')}</span>
+    <span class="pcard-f">${who(p.createdBy)}${toolChips(p.tools, 4)}</span></button>`;
+}
+function vAxBoard(){
+  const posts = S.posts;
+  const usable = posts.filter(p => p.status==='done' && p.usable).sort(byUpdated);
+  const authors = [...new Set(posts.map(p => p.createdBy).filter(Boolean))].sort((a,b) => nameOf(a).localeCompare(nameOf(b), 'ko'));
+  const q = S.postQ.trim().toLowerCase();
+  let list = posts.filter(p => (S.postPart==='all' || p.part===S.postPart) && (S.postWho==='all' || p.createdBy===S.postWho)
+    && (!q || [p.title, p.summary, p.body, (p.tools||[]).join(' ')].join(' ').toLowerCase().includes(q)));
+  if (S.postView==='key') list = list.filter(p => p.priority !== 'normal');
+  if (S.postView==='recent') list = list.filter(p => Date.now() - ts(p.updatedAt) < 14*864e5);
+  list = [...list].sort(byUpdated);
+  const cnt = k => posts.filter(p => p.status===k).length;
+  return `<div class="head"><div><h1>AX 실적</h1><p>디자인·퍼블리싱 파트에서 AI를 업무에 적용하며 얻은 활용 사례, 노하우, 산출물을 자유 형식으로 공유하고 관리합니다.</p></div>
+    ${canW() ? '<button class="btn pri" data-act="post-new">+ 새 글쓰기</button>' : ''}</div>
+  <div class="pstats">
+    <span>전체 <b class="num">${posts.length}</b></span><span>${tint('진행 중','purple')} <b class="num">${cnt('doing') + cnt('test')}</b></span><span>${tint('완료','green')} <b class="num">${cnt('done')}</b></span><span>${tint('활용 가능','orange')} <b class="num">${usable.length}</b></span>
+    ${Object.entries(PARTS).map(([k,l]) => `<span class="muted">${l} <b class="num" style="color:var(--fg)">${posts.filter(p => p.part===k).length}</b></span>`).join('')}
+  </div>
+
+  <div class="sec" style="margin-top:18px"><div class="sec-h"><h2 style="font-size:13.5px">활용 <span class="muted" style="font-weight:500">(완료 · 활용 가능)</span></h2></div>
+    ${usable.length ? `<div class="pcards">${usable.slice(0, 8).map(postCard).join('')}</div>` : `<div class="box"><div class="empty">완료된 글 중 ‘활용 가능’으로 표시한 사례가 여기에 모입니다.</div></div>`}</div>
+
+  <div class="sec">
+    <div class="ptabs" role="tablist"><button role="tab" class="${S.postWho==='all'?'on':''}" data-act="pwho" data-k="all">전체</button>${authors.map(id => `<button role="tab" class="${S.postWho===id?'on':''}" data-act="pwho" data-k="${esc(id)}">${esc(nameOf(id))}</button>`).join('')}</div>
+    <div class="row" style="justify-content:space-between;margin:12px 0">
+      <div class="row"><div class="seg" role="group" aria-label="보기">${[['all','전체'],['key','핵심·중요'],['recent','최근 업데이트']].map(([k,l]) => `<button data-act="pview" data-k="${k}" class="${S.postView===k?'on':''}">${l}</button>`).join('')}</div>
+        <div class="seg" role="group" aria-label="파트">${[['all','모든 파트'], ...Object.entries(PARTS)].map(([k,l]) => `<button data-act="ppart" data-k="${k}" class="${S.postPart===k?'on':''}">${l}</button>`).join('')}</div></div>
+      <input type="search" id="pq" placeholder="제목·내용·AI Tool 검색" value="${esc(S.postQ)}" style="max-width:240px">
+    </div>
+    <div class="tbl-wrap"><table class="ptable"><thead><tr><th>제목</th><th>요약</th><th>첨부파일</th><th>작성자</th><th>상태</th><th>AI Tool</th><th>중요도</th><th>분류</th><th>일정</th><th>최근 업데이트</th></tr></thead><tbody id="post-list">
+      ${list.length ? list.map(p => `<tr class="click" data-act="post-view" data-id="${esc(p.id)}">
+        <td class="pt-title"><span class="t-title">${p.part!=='common' ? '' : ''}${esc(p.title)}</span><span class="t-sub">${PARTS[p.part]}${p.companyId ? ' · ' + esc(coName(p.companyId)) : ''}</span></td>
+        <td class="pt-sum">${esc(p.summary || '')}</td>
+        <td class="pt-file">${(p.attachments||[]).length ? esc(p.attachments[0].name) + (p.attachments.length > 1 ? ` 외 ${p.attachments.length-1}` : '') : '<span class="muted">—</span>'}</td>
+        <td>${who(p.createdBy)}</td>
+        <td>${tint(P_STATUS[p.status]?.l || '', P_STATUS[p.status]?.h || 'gray')}</td>
+        <td class="pt-tools">${toolChips(p.tools, 3)}</td>
+        <td>${tint(P_PRI[p.priority]?.l || '', P_PRI[p.priority]?.h || 'gray')}</td>
+        <td>${tint(P_CAT[p.category]?.l || '', P_CAT[p.category]?.h || 'gray')}</td>
+        <td class="num">${p.start || p.end ? `${shortDate(p.start)} → ${shortDate(p.end)}` : '<span class="muted">—</span>'}</td>
+        <td class="num">${fmtTs(p.updatedAt)}</td></tr>`).join('')
+        : emptyRow(10, loading('ax_posts') ? '불러오는 중…' : posts.length ? '<b>조건에 맞는 글이 없습니다</b>필터나 검색어를 바꿔보세요.' : `<b>아직 올라온 AX 실적이 없습니다</b>${canW() ? '‘새 글쓰기’로 첫 활용 사례를 올려보세요.' : ''}`)}
+    </tbody></table></div>
+  </div>`;
+}
+function postView(id){
+  const p = S.posts.find(x => x.id===id); if (!p) return;
+  const st = P_STATUS[p.status] || P_STATUS.idea;
+  openModal(`${mhead(esc(p.title), `${who(p.createdBy)} · 최근 업데이트 ${fmtTs(p.updatedAt)}${p.companyId ? ' · ' + esc(coName(p.companyId)) : ''}`)}
+  <div class="mb">
+    <div class="row" style="gap:6px">${tint(PARTS[p.part], PART_HUE[p.part])}${tint(st.l, st.h)}${p.usable ? tint('활용 가능','orange') : ''}${tint(P_CAT[p.category]?.l || '', P_CAT[p.category]?.h || 'gray')}${tint('중요도 ' + (P_PRI[p.priority]?.l || ''), P_PRI[p.priority]?.h || 'gray')}</div>
+    ${p.summary ? `<p style="margin:0;font-size:14px;color:var(--fg-2)">${esc(p.summary)}</p>` : ''}
+    <dl class="kv">
+      <dt>AI Tool</dt><dd class="row" style="gap:4px">${(p.tools||[]).length ? toolChips(p.tools) : '—'}</dd>
+      <dt>일정</dt><dd class="num">${p.start || p.end ? `${p.start ? fmtD(p.start) : ''} → ${p.end ? fmtD(p.end) : ''}` : '—'}</dd>
+    </dl>
+    ${p.body ? `<div class="f"><span class="lab">내용</span><div class="body-text">${linkify(p.body)}</div></div>` : ''}
+    <div class="f"><span class="lab">첨부파일 ${(p.attachments||[]).length}개</span>${attachView(p.attachments)}</div>
+  </div>
+  <div class="mf">${canEditPost(p) ? `<span class="left" id="del-zone"><button class="btn danger" data-act="ask-del">삭제</button></span><button class="btn" data-act="post-edit" data-id="${esc(p.id)}">수정</button>` : ''}<button class="btn ink" data-act="close">닫기</button></div>`, true);
+  delTarget = {kind:'post', id};
+}
+function tgGroup(name, options, selected, multi){
+  return `<div class="tg" data-group="${name}" ${multi ? 'data-multi="1"' : ''} role="group">${options.map(([v,l,h]) => `<button type="button" class="chip tint h-${h} tgb" data-act="tg" data-v="${esc(v)}" aria-pressed="${(multi ? selected.includes(v) : selected===v) ? 'true' : 'false'}">${esc(l)}</button>`).join('')}</div>`;
+}
+const tgVal = name => [...document.querySelectorAll(`.tg[data-group="${name}"] .tgb[aria-pressed="true"]`)].map(b => b.dataset.v);
+function postForm(id){
+  const p = id ? S.posts.find(x => x.id===id) : null;
+  const tools = p?.tools || [];
+  const toolOpts = [...TOOLS.map(([t,h]) => [t,t,h]), ...tools.filter(t => !TOOLS.some(x => x[0]===t)).map(t => [t,t,'teal'])];
+  openModal(`${mhead(p ? 'AX 실적 수정' : 'AX 실적 올리기', '진행 내용을 한 줄로 요약해 제목으로 써주세요.')}
+  <form id="f-post" class="mb" novalidate>
+    <div class="f"><label for="p-title">제목</label><input type="text" id="p-title" class="big-input" maxlength="140" value="${esc(p?.title||'')}" placeholder="예: [기업] 상품상세 KV 프롬프트 생성기 개발·배포"></div>
+    <div class="f"><label for="p-sum">요약</label><input type="text" id="p-sum" maxlength="240" value="${esc(p?.summary||'')}" placeholder="진행 사항을 간략하게 요약해 주세요"></div>
+    <div class="f"><span class="lab">작성자</span><span class="who">${userAv(p?.createdBy || S.me.id, 22)}${esc(nameOf(p?.createdBy || S.me.id))}</span><span class="hint">로그인한 계정으로 자동 등록됩니다</span></div>
+    <div class="f"><span class="lab">파트</span>${tgGroup('part', Object.entries(PARTS).map(([k,l]) => [k,l,PART_HUE[k]]), p?.part || lsGet('hub.lastPart') || 'design')}</div>
+    <div class="f"><span class="lab">상태</span>${tgGroup('status', Object.entries(P_STATUS).map(([k,o]) => [k,o.l,o.h]), p?.status || 'idea')}
+      <label class="check" style="font-size:12.5px"><input type="checkbox" id="p-usable" ${p?.usable ? 'checked' : ''} ${p?.status==='done' ? '' : 'disabled'}> 활용 가능 — 목록 위 ‘활용’ 카드에 표시 (상태가 완료일 때 선택 가능)</label></div>
+    <div class="f"><span class="lab">AI Tool <span class="muted" style="font-weight:400">여러 개 선택할 수 있습니다</span></span>${tgGroup('tools', toolOpts, tools, true)}
+      <div class="row"><input type="text" id="p-tool-add" maxlength="30" placeholder="목록에 없는 도구 직접 추가" style="max-width:240px"><button type="button" class="btn sm" data-act="tool-add">추가</button></div></div>
+    <div class="f"><span class="lab">분류</span>${tgGroup('category', Object.entries(P_CAT).map(([k,o]) => [k,o.l,o.h]), p?.category || 'case')}</div>
+    <div class="f"><span class="lab">중요도</span>${tgGroup('priority', Object.entries(P_PRI).map(([k,o]) => [k,o.l,o.h]), p?.priority || 'normal')}</div>
+    <div class="fr"><div class="f"><label for="p-start">시작일</label><input type="date" id="p-start" value="${p?.start||''}"></div><div class="f"><label for="p-end">완료일</label><input type="date" id="p-end" value="${p?.end||''}"></div></div>
+    ${attachField(p?.attachments, 'posts')}
+    <div class="f"><label for="p-body">내용</label><textarea id="p-body" rows="10" maxlength="30000" placeholder="진행한 업무와 새롭게 시도한 내용, 활용 방법·도구·참고 링크 등 진행 과정을 작성해 주세요.">${esc(p?.body||'')}</textarea><span class="hint">링크(https://…)는 자동으로 연결됩니다. 이미지·영상·문서는 첨부파일로 올려주세요.</span></div>
+    <div class="err" id="f-err"></div>
+  </form>
+  <div class="mf"><button class="btn" data-act="close">취소</button><button class="btn pri" data-submit="f-post">${p ? '저장' : '등록'}</button></div>`, true);
+  $('#f-post').dataset.id = id || '';
+}
+async function savePost(){
+  const title = $('#p-title').value.trim(); if (!title) return $('#f-err').textContent = '제목을 입력해주세요.';
+  const start = $('#p-start').value || null, end = $('#p-end').value || null;
+  if (start && end && end < start) return $('#f-err').textContent = '완료일이 시작일보다 빠릅니다.';
+  if (upl.uploading) return $('#f-err').textContent = '파일을 올리는 중입니다. 잠시 기다려주세요.';
+  const status = tgVal('status')[0] || 'idea', part = tgVal('part')[0] || 'design';
+  const id = $('#f-post').dataset.id, old = id ? S.posts.find(x => x.id===id) : null;
+  const row = {title, summary:$('#p-sum').value.trim(), body:$('#p-body').value.trim(), part, status, usable: status==='done' && $('#p-usable').checked,
+    tools: tgVal('tools'), category: tgVal('category')[0] || 'case', priority: tgVal('priority')[0] || 'normal', start_date:start, end_date:end, attachments: cleanFiles()};
+  const ok = await run(id ? sb.from('ax_posts').update(row).eq('id', id).select('id') : sb.from('ax_posts').insert(row).select('id'), true);
+  if (ok) { upl.saved = true; removeDropped(old?.attachments, row.attachments); lsSet('hub.lastPart', part); closeModal(); reload('ax_posts'); toast(old ? 'AX 실적을 수정했습니다.' : 'AX 실적을 올렸습니다.'); }
+}
+
+/* ---------- AI IMAGE (designers) ---------- */
 function axCell(a){
   const st = statusOf(a);
   return `<button class="cellbtn" data-act="ax-view" data-id="${esc(a.id)}"><span class="rate num"><span class="dot st-${st}" title="${STATUS[st].l}"></span>${pct(a.aiImage,a.total) ?? '–'}%</span><span class="cnt num">${a.aiImage} / ${a.total}</span></button>`;
@@ -404,7 +572,7 @@ function sumCell(sm){
 }
 function vAx(){
   const yr = S.axYear, rm = prevMonth();
-  const AX = S.ax.filter(isPartnerAx), pcos = partnerCos(), pm = partnerMembers();
+  const AX = S.ax.filter(isPartnerAx), pcos = partnerCos(), pm = imgMembers();
   const yrs = [...new Set([now.getFullYear(), ...AX.map(a => Number(a.month.slice(0,4)))])].sort();
   const AXY = AX.filter(a => a.month.startsWith(yr+'-'));
   const firstM = AXY.length ? Math.min(...AXY.map(a => Number(a.month.slice(5)))) : 1;
@@ -459,7 +627,7 @@ function vAx(){
     .filter(a => S.axCo==='all' || a.companyId===S.axCo)
     .sort((a,b) => ts(b.submittedAt) - ts(a.submittedAt));
 
-  return `<div class="head"><div><h1>AX 실적 · 첨부 검토</h1><p>협력사 팀원이 개인별로 월 실적(AI 이미지 제작 건수, AI 활용 제작 건수, 전체 이미지 제작 수)과 증빙을 올리면, 협력사별 합계와 팀원별 실적이 함께 집계됩니다.</p></div>
+  return `<div class="head"><div><h1>AI 이미지 제작 현황</h1><p>협력사 <b>디자인 파트</b> 팀원이 개인별로 월 실적(AI 이미지 제작 건수, AI 활용 제작 건수, 전체 이미지 제작 수)과 증빙을 올리면, 협력사별 합계와 팀원별 실적이 함께 집계됩니다. 디자인·퍼블리싱의 다른 AX 활동은 ‘AX 실적’ 메뉴에 올려주세요.</p></div>
     <div class="row">${yrs.length>1 ? `<select id="axyear" style="width:auto">${yrs.map(y => `<option value="${y}" ${y===yr?'selected':''}>${y}년</option>`).join('')}</select>` : ''}${canW() ? `<button class="btn pri" data-act="ax-new">+ 실적 제출</button>` : ''}</div></div>
 
   <div class="row" style="justify-content:space-between;margin-bottom:12px">
@@ -468,7 +636,7 @@ function vAx(){
   </div>
   <div class="tiles fit">${tiles}</div>
 
-  <div class="sec"><div class="sec-h"><h2>${yr}년 팀원별 AI 적용 현황</h2><span class="muted" style="font-size:12px">적용률 = AI 이미지 제작 건수 ÷ 전체 이미지 제작 수 · 칸을 누르면 제출 내용과 첨부를 볼 수 있습니다</span></div>
+  <div class="sec"><div class="sec-h"><h2>${yr}년 디자이너별 AI 이미지 적용 현황</h2><span class="muted" style="font-size:12px">적용률 = AI 이미지 제작 건수 ÷ 전체 이미지 제작 수 · 칸을 누르면 제출 내용과 첨부를 볼 수 있습니다</span></div>
   <div class="tbl-wrap"><table class="mx"><thead><tr><th>협력사 / 팀원</th>${months.map(m => `<th class="${m===mo?'curm':''}">${Number(m.slice(5))}월</th>`).join('')}<th>연간</th></tr></thead><tbody>
     ${pcos.length ? rowsHtml : emptyRow(months.length+2, loading('companies') ? '불러오는 중…' : '등록된 협력사가 없습니다.')}
     <tr class="hl"><td>적용률 (${S.axCo==='all' ? '협력사 합계' : esc(coName(S.axCo))})</td>${totals.map(t => `<td class="num"><b>${t.tot ? pct(t.ai,t.tot)+'%' : '–'}</b></td>`).join('')}<td class="num"><b>${yearTot.tot ? pct(yearTot.ai,yearTot.tot)+'%' : '–'}</b></td></tr>
@@ -498,7 +666,7 @@ function vTeam(){
     <div class="row">${S.isAdmin ? `<button class="btn" data-act="co-new">+ 그룹 추가</button>` : ''}${writableCos().length ? `<button class="btn pri" data-act="mem-new">+ 팀원 추가</button>` : ''}</div></div>
   ${groups.length ? `<div class="cos">${groups.map(c => { const ms = S.members.filter(m => m.companyId===c.id).sort((a,b) => a.name.localeCompare(b.name,'ko'));
     return `<section class="cocard"><header><b><span class="dot" style="color:${coColor(c.id)}"></span>${esc(c.name)}<span class="chip ${c.kind==='internal'?'acc':''}" style="height:20px;font-size:11px">${c.kind==='internal'?'정규직':'협력사'}</span></b><span class="row"><span class="muted" style="font-size:12px">${ms.length}명</span>${S.isAdmin ? `<button class="icon-btn" data-act="co-edit" data-id="${esc(c.id)}" aria-label="${esc(c.name)} 설정">설정</button>` : ''}</span></header>
-    ${ms.length ? ms.map(m => `<div class="mrow">${memberAv(m, 30)}<span class="grow"><b>${esc(m.name)}</b> <small>${esc(m.role||'')}</small></span><small class="num">${fmtDays(usedOf(m.id))}</small>${canCo(c.id) ? `<button class="icon-btn" data-act="mem-edit" data-id="${esc(m.id)}" aria-label="${esc(m.name)} 수정">수정</button>` : ''}</div>`).join('')
+    ${ms.length ? ms.map(m => `<div class="mrow">${memberAv(m, 30)}<span class="grow"><b>${esc(m.name)}</b> ${tint(MEMBER_PARTS[m.part]||'디자인', m.part==='publishing'?'teal':m.part==='etc'?'gray':'blue', 'style="height:18px;font-size:10.5px"')} <small>${esc(m.role||'')}</small></span><small class="num">${fmtDays(usedOf(m.id))}</small>${canCo(c.id) ? `<button class="icon-btn" data-act="mem-edit" data-id="${esc(m.id)}" aria-label="${esc(m.name)} 수정">수정</button>` : ''}</div>`).join('')
       : `<div class="empty" style="padding:22px 14px">등록된 팀원이 없습니다.${canCo(c.id) ? '<br>‘팀원 추가’로 명단을 만드세요.' : ''}</div>`}</section>`; }).join('')}</div>`
     : `<div class="box"><div class="empty">${loading('companies') ? '불러오는 중…' : `<b>등록된 그룹이 없습니다</b>${S.isAdmin ? '‘그룹 추가’로 시작하세요.' : 'DX디자인팀이 그룹을 등록하면 표시됩니다.'}`}</div></div>`}`;
 }
@@ -702,9 +870,9 @@ function vacView(id){
 
 /* AX */
 function axForm(memberId, month){
-  const pm = partnerMembers().filter(m => canCo(m.companyId));
+  const pm = imgMembers().filter(m => canCo(m.companyId));
   if (!pm.length) {
-    openModal(`${mhead('AX 실적 제출')}<div class="mb"><div class="empty"><b>협력사 팀원이 없습니다</b>실적은 협력사 팀원 개인별로 제출합니다. 먼저 ‘협력사 · 팀원’에서 디지털·기업 팀원을 추가하세요.</div></div>
+    openModal(`${mhead('AI 이미지 실적 제출')}<div class="mb"><div class="empty"><b>디자인 파트 협력사 팀원이 없습니다</b>AI 이미지 실적은 협력사 디자인 파트 팀원 개인별로 제출합니다. ‘협력사 · 팀원’에서 디지털·기업 팀원을 추가하고 파트를 ‘디자인’으로 지정하세요.</div></div>
       <div class="mf"><button class="btn" data-act="close">닫기</button><a class="btn pri" href="#team" data-act="close">팀원 추가하러 가기</a></div>`); return;
   }
   const last = lsGet('hub.lastAxMember');
@@ -712,7 +880,7 @@ function axForm(memberId, month){
   const mo = month || prevMonth();
   const opts = partnerCos().map(c => { const ms = pm.filter(m => m.companyId===c.id);
     return ms.length ? `<optgroup label="${esc(c.name)}">${ms.map(m => `<option value="${esc(m.id)}" ${m.id===mid?'selected':''}>${esc(m.name)}${m.role?' · '+esc(m.role):''}</option>`).join('')}</optgroup>` : ''; }).join('');
-  openModal(`${mhead('AX 실적 제출', '팀원 1명 × 월 1건씩 제출합니다. 같은 팀원·같은 달을 다시 제출하면 기존 내용이 수정됩니다.')}
+  openModal(`${mhead('AI 이미지 실적 제출', '디자이너 1명 × 월 1건씩 제출합니다. 같은 팀원·같은 달을 다시 제출하면 기존 내용이 수정됩니다.')}
   <form id="f-ax" class="mb" novalidate>
     <div class="fr"><div class="f"><label for="a-mem">팀원</label><select id="a-mem">${opts}</select></div>
       <div class="f"><label for="a-month">실적 월</label><input type="month" id="a-month" value="${mo}" max="${curMonth}" placeholder="YYYY-MM"></div></div>
@@ -808,7 +976,8 @@ function memForm(id){
     <div class="f"><span class="lab">프로필 사진 <span class="muted" style="font-weight:400">(선택)</span></span><div class="row" id="m-photo-wrap" style="gap:12px"></div></div>
     <div class="f"><label for="m-name">이름</label><input type="text" id="m-name" maxlength="40" value="${esc(m?.name||'')}"></div>
     <div class="fr"><div class="f"><label for="m-co">소속</label><select id="m-co" ${cos.length===1 || m ? 'disabled' : ''}>${cos.map(c => `<option value="${esc(c.id)}" ${(m?.companyId||lsGet('hub.lastCo')||S.myCompany)===c.id?'selected':''}>${esc(c.name)}${c.kind==='internal'?' (정규직)':''}</option>`).join('')}</select></div>
-    <div class="f"><label for="m-role">직무 <span class="muted" style="font-weight:400">(선택)</span></label><input type="text" id="m-role" maxlength="40" value="${esc(m?.role||'')}" placeholder="예: 3D 디자이너"></div></div>
+    <div class="f"><label for="m-part">파트</label><select id="m-part">${Object.entries(MEMBER_PARTS).map(([k,l]) => `<option value="${k}" ${(m?.part||'design')===k?'selected':''}>${l}</option>`).join('')}</select></div></div>
+    <div class="f"><label for="m-role">직무 <span class="muted" style="font-weight:400">(선택)</span></label><input type="text" id="m-role" maxlength="40" value="${esc(m?.role||'')}" placeholder="예: 3D 디자이너"><span class="hint">AI 이미지 제작 현황에는 협력사의 디자인 파트 팀원만 나옵니다.</span></div>
     ${m ? '<div class="hint">팀원을 삭제하면 그 팀원의 휴가 기록도 함께 삭제됩니다. AX 실적이 있는 팀원은 삭제할 수 없습니다. 소속을 바꾸려면 삭제 후 새로 추가해주세요.</div>' : ''}
     <div class="err" id="f-err"></div>
   </form>
@@ -832,7 +1001,7 @@ async function pickMemPhoto(file){
 async function saveMem(){
   const name = $('#m-name').value.trim(); if (!name) return $('#f-err').textContent = '이름을 입력해주세요.';
   const id = $('#f-mem').dataset.id;
-  const row = {name, company_id:$('#m-co').value, title:$('#m-role').value.trim(), photo_path: memPhoto.cur};
+  const row = {name, company_id:$('#m-co').value, title:$('#m-role').value.trim(), part:$('#m-part').value, photo_path: memPhoto.cur};
   const ok = await run(id ? sb.from('members').update(row).eq('id', id).select('id') : sb.from('members').insert(row).select('id'), true);
   if (ok) {
     memPhoto.saved = true;
@@ -901,6 +1070,7 @@ async function doDelete(){
   if (t.kind==='notice') { const n = S.notices.find(x => x.id===t.id); ok = await run(sb.from('notices').delete().eq('id', t.id).select('id'), true); if (ok) { removeFiles((n?.attachments||[]).map(f => f.path)); reload('notices'); } }
   if (t.kind==='vacation') { ok = await run(sb.from('vacations').delete().eq('id', t.id).select('id'), true); if (ok) reload('vacations'); }
   if (t.kind==='member') { const m = memberById(t.id); ok = await run(sb.from('members').delete().eq('id', t.id).select('id'), true); if (ok) { if (m?.photoPath) removeFiles([m.photoPath]); if (memPhoto) memPhoto.saved = true; reload('members'); reload('vacations'); } }
+  if (t.kind==='post') { const p = S.posts.find(x => x.id===t.id); ok = await run(sb.from('ax_posts').delete().eq('id', t.id).select('id'), true); if (ok) { removeFiles((p?.attachments||[]).map(f => f.path)); reload('ax_posts'); } }
   if (t.kind==='company') { ok = await run(sb.from('companies').delete().eq('id', t.id).select('id'), true); if (ok) reload('companies'); }
   if (t.kind==='ax') { const a = S.ax.find(x => x.id===t.id); ok = await run(sb.from('ax_reports').delete().eq('id', t.id).select('id'), true); if (ok) { removeFiles((a?.attachments||[]).map(f => f.path)); reload('ax_reports'); reload('ax_reviews'); } }
   if (t.kind==='user') { ok = await run(sb.from('allowed_emails').delete().eq('email', t.id).select('email'), true); if (ok) { load('allowed_emails'); reload('profiles'); } }
@@ -913,12 +1083,25 @@ document.addEventListener('click', e => {
   if (e.target.matches('[data-ov]')) { closeModal(); return; }
   if (e.target.closest('[data-theme-toggle]')) return;
   const sbm = e.target.closest('[data-submit]');
-  if (sbm) { e.preventDefault(); ({'f-notice':saveNotice,'f-vac':saveVac,'f-ax':saveAx,'f-mem':saveMem,'f-co':saveCo,'f-user':saveUser})[sbm.dataset.submit]?.(); return; }
+  if (sbm) { e.preventDefault(); ({'f-notice':saveNotice,'f-vac':saveVac,'f-ax':saveAx,'f-mem':saveMem,'f-co':saveCo,'f-user':saveUser,'f-post':savePost})[sbm.dataset.submit]?.(); return; }
   const el = e.target.closest('[data-act]'); if (!el) return;
   const a = el.dataset.act, id = el.dataset.id, k = el.dataset.k;
   switch (a) {
     case 'close': closeModal(); break;
     case 'notice-view': noticeView(id); break;
+    case 'post-new': if (canW()) postForm(); break;
+    case 'post-view': postView(id); break;
+    case 'post-edit': postForm(id); break;
+    case 'pwho': S.postWho = k; render(); break;
+    case 'pview': S.postView = k; render(); break;
+    case 'ppart': S.postPart = k; render(); break;
+    case 'hday': S.homeDay = el.dataset.d; render(); break;
+    case 'hnotice': S.homeNotice = k; render(); break;
+    case 'tg': { const g = el.closest('.tg'); if (g.dataset.multi) el.setAttribute('aria-pressed', el.getAttribute('aria-pressed')==='true' ? 'false' : 'true');
+      else g.querySelectorAll('.tgb').forEach(b => b.setAttribute('aria-pressed', b===el ? 'true' : 'false'));
+      if (g.dataset.group==='status') { const u = $('#p-usable'); if (u) { u.disabled = el.dataset.v!=='done'; if (u.disabled) u.checked = false; } }
+      break; }
+    case 'tool-add': addTool(); break;
     case 'notice-new': noticeForm(); break;
     case 'notice-edit': noticeForm(id); break;
     case 'ncat': S.noticeCat = k; render(); break;
@@ -930,7 +1113,7 @@ document.addEventListener('click', e => {
     case 'cal-today': S.cal = {y:now.getFullYear(), m:now.getMonth()}; render(); break;
     case 'cof': S.coFilter = k; render(); break;
     case 'ax-new': if (canW()) axForm(el.dataset.member, el.dataset.month); break;
-    case 'ax-goto': e.preventDefault(); if (el.dataset.month) S.axMonth = el.dataset.month; if (el.dataset.co) S.axCo = el.dataset.co; S.axYear = Number((el.dataset.month||curMonth).slice(0,4)); if (location.hash==='#ax') render(); else location.hash = 'ax'; break;
+    case 'ax-goto': e.preventDefault(); if (el.dataset.month) S.axMonth = el.dataset.month; if (el.dataset.co) S.axCo = el.dataset.co; S.axYear = Number((el.dataset.month||curMonth).slice(0,4)); if (location.hash==='#aiimg') render(); else location.hash = 'aiimg'; break;
     case 'axco': S.axCo = k; render(); break;
     case 'ax-view': axView(id); break;
     case 'axf': S.axFilter = k; render(); break;
@@ -954,6 +1137,7 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('input', e => {
   if (e.target.id==='nq') { S.noticeQ = e.target.value; renderNoticeList(); }
+  if (e.target.id==='pq') { S.postQ = e.target.value; clearTimeout(pqT); pqT = setTimeout(() => { render(); setTimeout(() => { const i = $('#pq'); if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); } }, 20); }, 250); }
   if (['a-ai','a-total'].includes(e.target.id)) syncRate();
 });
 document.addEventListener('change', e => {
@@ -968,6 +1152,7 @@ document.addEventListener('change', e => {
 });
 document.addEventListener('keydown', e => {
   if (e.key==='Escape') { if (!$('#lb').hidden) { $('#lb').hidden = true; return; } if (!$('#modal').hidden) closeModal(); }
+  if (e.key==='Enter' && e.target.id==='p-tool-add') { e.preventDefault(); addTool(); return; }
   if (e.key==='Enter' && e.target.matches('#modal input[type=text],#modal input[type=number]')) { e.preventDefault(); $('#modal [data-submit]')?.click(); }
 });
 document.addEventListener('submit', e => e.preventDefault());
@@ -989,6 +1174,15 @@ async function setMyPhoto(file){
     render(); reload('profiles');
     toast(file ? '프로필 사진을 바꿨습니다.' : '프로필 사진을 삭제했습니다.');
   } catch (e) { toast(e.message && !e.code ? e.message : errMsg(e)); }
+}
+let pqT = 0;
+function addTool(){
+  const i = $('#p-tool-add'), v = (i?.value || '').trim(); if (!v) return;
+  const g = $('.tg[data-group="tools"]');
+  const ex = [...g.querySelectorAll('.tgb')].find(b => b.dataset.v.toLowerCase()===v.toLowerCase());
+  if (ex) ex.setAttribute('aria-pressed', 'true');
+  else g.insertAdjacentHTML('beforeend', `<button type="button" class="chip tint h-${toolHue(v)} tgb" data-act="tg" data-v="${esc(v)}" aria-pressed="true">${esc(v)}</button>`);
+  i.value = '';
 }
 async function savePassword(){
   const p1 = $('#pw1').value, p2 = $('#pw2').value, err = $('#pw-err');
