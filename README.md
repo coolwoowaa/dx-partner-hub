@@ -26,7 +26,7 @@ DX디자인팀과 협력사가 함께 쓰는 사이트입니다. 공지사항, �
 1. 왼쪽 메뉴 **SQL Editor** → New query
 2. `supabase/schema.sql` 전체를 붙여 넣고 **Run**
 3. `supabase/seed.sql` 을 열어 `YOUR_EMAIL@medialog.co.kr` 를 **본인(첫 관리자) 이메일**로 바꾼 뒤 붙여 넣고 **Run**
-   - 협력사 3곳과 기존 현황판의 2026년 4~10월 협력사 실적이 들어갑니다.
+   - 협력사 2곳(디지털, 기업)과 기존 현황판의 2026년 4~10월 실적이 들어갑니다.
 
 ### 3. 로그인 설정
 **Authentication → URL Configuration**
@@ -110,6 +110,6 @@ app.js                화면 동작, Supabase 연결
 config.js             Supabase URL / anon 키  ← 직접 채움
 vendor/               supabase-js 2.117.3 브라우저 빌드 (CDN 차단된 사내망 대비)
 supabase/schema.sql   테이블, 권한(RLS), 트리거, 첨부 저장소
-supabase/seed.sql     협력사 3곳, 첫 관리자, 2026년 4~10월 실적
+supabase/seed.sql     협력사 2곳(디지털, 기업), 첫 관리자, 2026년 4~10월 실적
 vercel.json           보안 헤더, 검색 노출 차단
 ```
