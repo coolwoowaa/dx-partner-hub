@@ -84,6 +84,8 @@ python3 -m http.server 3000
 
 `supabase/upgrade-*.sql` 파일을 번호 순서대로 SQL Editor에서 한 번씩 실행하세요. 여러 번 실행해도 안전합니다.
 
+**002~004를 한꺼번에 적용하려면 `supabase/upgrade-now.sql` 하나만 실행하면 됩니다.** 결과가 `정규직팀 1 | 협력사 2 | 실적기록 14` 처럼 나오면 완료입니다.
+
 | 파일 | 내용 |
 |---|---|
 | `upgrade-002-team-avatars.sql` | 정규직 팀 그룹(DX디자인팀) 추가, 프로필 사진 기능 |
