@@ -29,7 +29,8 @@ DX디자인팀(정규직)과 협력사(디지털, 기업)가 함께 쓰는 업�
 | `supabase/schema.sql` | 전체 스키마(새 설치용). 재실행 안전하게 유지 |
 | `supabase/seed.sql` | 그룹 3개, 첫 관리자, 2026년 4~10월 AI 이미지 이관 실적 |
 | `supabase/upgrade-00N-*.sql` | 이미 운영 중인 DB에 적용하는 변경분. 현재 006까지 적용됨 |
-| `vercel.json` | 보안 헤더, 검색 노출 차단 |
+| `vercel.json` / `.vercelignore` | 보안 헤더, 검색 노출 차단 / 배포 제외 목록 |
+| `tools/` | 시험 도구(로컬 DB 권한 점검, 가짜 Supabase 화면 점검, Figma 캡처). 배포 제외 |
 
 화면(라우트): `home`(대시보드) · `notice` · `leave`(휴가) · `ax`(AX 실적 게시판) · `aiimg`(AI 이미지 제작) · `team`(협력사·팀원) · `users`(사용자 관리, 관리자) · `account`(내 계정)
 
@@ -69,12 +70,15 @@ DX디자인팀(정규직)과 협력사(디지털, 기업)가 함께 쓰는 업�
 - 모바일(≤860px)에서는 사이드바가 위쪽 가로 메뉴가 된다. 화면 폭 390px에서 가로 스크롤이 생기지 않아야 한다.
 - 공휴일은 `app.js` 맨 위 `HOLIDAYS`에 있다(현재 2026년). 연말에 다음 해를 추가한다.
 
-## 5. 검증 방법
+## 5. 검증 방법 (도구는 `tools/`, 사용법은 `tools/README.md`)
 
+바꾼 뒤에는 아래를 돌려 **통과를 확인하고 나서** 커밋한다.
 - 문법: `node --check app.js`
-- SQL: 로컬 Postgres 16(`/usr/lib/postgresql/16/bin`)에 Supabase 흉내 스키마(auth.users·auth.uid()·storage.objects·storage.foldername·publication)를 만들고 `schema.sql` → `seed.sql` → 해당 upgrade를 **두 번** 실행한다. 권한은 `set role authenticated` + `request.jwt.claim.sub` 설정으로 관리자·작성자·열람·미등록 계정을 각각 시험한다. 운영 DB 상태를 재현할 때는 `git show <커밋>:supabase/schema.sql`로 그 시점 스키마부터 올린다.
-- 화면: Playwright(Chromium 설치돼 있음)로 `vendor/supabase-2.117.3.js` 요청을 가짜 Supabase(메모리 데이터)로 가로채 관리자·작성자 계정으로 모든 라우트를 돌리고, 콘솔 오류 0건, 라이트·다크·모바일(390px) 캡처를 확인한다.
+- DB: `tools/pg/run-sql-test.sh` (새 설치) / `tools/pg/run-sql-test.sh --from <운영 상태 커밋> supabase/upgrade-00N-*.sql` (운영 DB 재현 + 업그레이드 두 번). 권한 점검 표가 `fail 0`이어야 한다. 새 권한 규칙은 `tools/pg/rls-check.sql`에 항목을 추가한다.
+- 화면: `node tools/smoke/smoke.js` → `결과: 통과`. 새 화면·폼은 `ROUTES`/`FORMS`에, 새 테이블의 데모 데이터는 `tools/smoke/stub-supabase.js`에 추가한다. 눈으로 볼 때는 `--shots <폴더>`로 라이트·다크·모바일 캡처를 확인한다.
+- Figma 캡처: `node tools/smoke/capture.js <폴더>` → 4장(01 홈·02 AX 실적 라이트, 03 휴가·04 AI 이미지 다크).
 - 가짜 데이터로 만든 캡처를 사용자에게 줄 때는 **"데모 데이터"라고 명시**하고, 실존 인물에게 가짜 기록을 붙이지 않는다(가명 사용). 실제 값은 기존 현황판의 2026년 4~10월 AI 이미지 수치뿐이다.
+- `tools/`, `supabase/`, 문서 파일은 `.vercelignore`로 배포에서 빠진다(사이트에 공개되지 않음).
 
 ## 6. 배포와 커밋
 
