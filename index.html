@@ -464,6 +464,20 @@ code{font-size:12px;background:var(--sunk);padding:1px 5px;border-radius:4px}
 .exp-all{border-top:1px solid var(--line);padding-top:14px}
 .exp-all .hint{flex:1;min-width:200px}
 
+/* ---- 알림 ---- */
+button.li{width:100%;border:0;border-bottom:1px solid var(--line);background:none;text-align:left;font:inherit;color:inherit}
+.li.al{align-items:flex-start}
+.li.al .chip{margin-top:1px;flex:none}
+.li.al .ttl{font-weight:500;white-space:normal}
+.li.al.new{background:color-mix(in srgb,var(--accent) 6%,var(--panel))}
+.li.al.new .ttl{font-weight:700}
+.li.al .nbadge{vertical-align:-2px;margin-right:2px}
+.li.al .meta{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.al-t{font-size:11.5px;white-space:nowrap;flex:none}
+.al-link{color:var(--bad);font-weight:600;text-decoration:none}
+.al-link:hover{text-decoration:underline}
+@media (max-width:640px){.li.al{flex-wrap:wrap;gap:6px 10px}.li.al .grow{order:3;flex-basis:100%}.li.al .al-t{margin-left:auto}}
+
 /* ---- AX 실적 댓글 ---- */
 .cmts{border-top:1px solid var(--line);padding-top:16px;display:flex;flex-direction:column;gap:12px}
 .cmts-h{font-size:13.5px;font-weight:700}
@@ -546,6 +560,7 @@ a.wm-card:hover{transform:translateY(-1px);filter:brightness(.98)}
     <nav class="navgrp nav" aria-label="메인 메뉴">
       <div class="lbl">Main menu</div>
       <a href="#home" data-r="home">홈</a>
+      <a href="#alerts" data-r="alerts">알림<span class="cnt" id="nav-alert-cnt" hidden></span></a>
       <a href="#notice" data-r="notice">공지사항</a>
       <a href="#leave" data-r="leave">휴가 일정</a>
       <a href="#ax" data-r="ax">AX 실적</a>

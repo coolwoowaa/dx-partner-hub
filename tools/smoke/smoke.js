@@ -6,12 +6,13 @@ const { chromium } = require('playwright');
 const fs = require('fs'), path = require('path');
 const { routeHub, watchErrors, HOST } = require('./serve');
 
-const ROUTES = ['home', 'notice', 'leave', 'ax', 'aiimg', 'team', 'users', 'account'];
+const ROUTES = ['home', 'alerts', 'notice', 'leave', 'ax', 'aiimg', 'team', 'users', 'account'];
 const ACCOUNTS = [
   { label: '관리자', q: 'role=admin' },
   { label: '작성자(디지털)', q: 'role=partner&co=tribe' },
   { label: '작성자(정규직)', q: 'role=partner&co=dx' },
   { label: '열람 전용', q: 'role=viewer' },
+  { label: '관리자(DB 업그레이드 전)', q: 'role=admin&missing=user_state' },
 ];
 const FORMS = ['post-new', 'vac-new', 'ax-new', 'mem-new', 'notice-new', 'user-new', 'exp-open'];
 const shotsDir = (() => { const i = process.argv.indexOf('--shots'); return i > 0 ? process.argv[i + 1] : null; })();
@@ -27,12 +28,39 @@ const shotsDir = (() => { const i = process.argv.indexOf('--shots'); return i > 
       const ctx = await b.newContext({ viewport: { width: vp.w, height: vp.h } });
       const p = await ctx.newPage(); const errs = watchErrors(p); await routeHub(p);
       await p.goto(`${HOST}/?${acc.q}#home`); await p.waitForTimeout(500);
+      const missingMode = /missing=/.test(acc.q);
       const canWrite = acc.label !== '열람 전용';
+      // 알림: 처음에는 새 알림 숫자가 보이고, 알림 화면을 열면 읽음 처리(이번 방문 동안은 '새' 표시 유지), 다시 오면 표시 없음
+      const badge = () => p.evaluate(() => { const e = document.querySelector('#nav-alert-cnt'); return e.hidden ? 0 : Number(e.textContent); });
+      const expNew = /co=tribe/.test(acc.q) ? 2 : 1;   // 데모 데이터: 내 글의 새 댓글 1건 (+ 디지털 소속이면 보완 요청 1건)
+      if ((await badge()) !== expNew) fail(`${acc.label}/${vp.tag}`, `처음 새 알림 숫자가 ${await badge()} (데모 데이터 ${expNew}건)`);
+      if (!(await p.$('.dash-head .al-link'))) fail(`${acc.label}/${vp.tag}`, '홈에 새 알림 링크가 없음');
+      await p.evaluate(() => location.hash = 'alerts'); await p.waitForTimeout(250);
+      const al1 = await p.evaluate(() => ({ rows: document.querySelectorAll('.li.al').length, fresh: document.querySelectorAll('.li.al.new').length, saved: (window.__DB.user_state || []).length }));
+      if (al1.fresh !== expNew) fail(`${acc.label}/${vp.tag}`, `알림 화면: 전체 ${al1.rows}건, 새 알림 ${al1.fresh}건 (새 알림 ${expNew}건이어야 함)`);
+      const todoN = await p.$$eval('.li.al[data-act="ax-view"]', l => l.length);
+      if (todoN !== expNew - 1) fail(`${acc.label}/${vp.tag}`, `보완 요청 알림이 ${todoN}건 (${expNew - 1}건이어야 함)`);
+      if (missingMode ? al1.saved !== 0 : al1.saved !== 1) fail(`${acc.label}/${vp.tag}`, `읽음 시각 저장 기록이 ${al1.saved}건`);
+      if ((await badge()) !== 0) fail(`${acc.label}/${vp.tag}`, '알림 화면을 열어도 숫자가 남아 있음');
+      await p.click('.li.al.new[data-act="post-view"]', { timeout: 3000 }).catch(() => {}); await p.waitForTimeout(150);
+      if (!(await p.$('#modal:not([hidden]) #cmts'))) fail(`${acc.label}/${vp.tag}`, '알림을 눌러도 해당 글이 열리지 않음');
+      await p.keyboard.press('Escape'); await p.waitForTimeout(80);
+      await p.evaluate(() => location.hash = 'home'); await p.waitForTimeout(150);
+      await p.evaluate(() => location.hash = 'alerts'); await p.waitForTimeout(200);
+      if (await p.$('.li.al.new')) fail(`${acc.label}/${vp.tag}`, "읽은 알림에 '새' 표시가 다시 나옴");
+      if (missingMode) {
+        if (/일부 데이터를 불러오지 못했습니다/.test(await p.textContent('#view'))) fail(`${acc.label}/${vp.tag}`, 'DB 업그레이드 전 상태에서 오류 안내가 뜸');
+        if (!/이 기기에만 저장/.test(await p.textContent('#view'))) fail(`${acc.label}/${vp.tag}`, 'DB 업그레이드 전 안내(이 기기에만 저장)가 없음');
+        await p.reload(); await p.waitForTimeout(500);
+        if ((await badge()) !== 0) fail(`${acc.label}/${vp.tag}`, 'DB 업그레이드 전: 새로고침하면 읽은 알림이 다시 새 알림으로 나옴');
+        errs.forEach(e => fail(`${acc.label}/${vp.tag}`, e)); await ctx.close(); continue;
+      }
+      await p.evaluate(() => location.hash = 'home'); await p.waitForTimeout(100);
       for (const r of ROUTES) {
         await p.evaluate(h => location.hash = h, r); await p.waitForTimeout(150);
         const sw = await p.evaluate(() => document.documentElement.scrollWidth);
         if (sw > vp.w + 1) fail(`${acc.label}/${vp.tag}`, `#${r} 가로 스크롤 생김 (폭 ${sw}px)`);
-        if (r === 'users' && acc.label !== '관리자') {
+        if (r === 'users' && !acc.label.startsWith('관리자')) {
           const t = await p.textContent('#view');
           if (!/관리자만 볼 수 있는 메뉴/.test(t)) fail(`${acc.label}/${vp.tag}`, '#users 가 관리자 외 계정에 열림');
         } else if (!(await p.$('#view h1, #view .dash-head'))) fail(`${acc.label}/${vp.tag}`, `#${r} 제목이 렌더되지 않음`);
@@ -173,5 +201,5 @@ const shotsDir = (() => { const i = process.argv.indexOf('--shots'); return i > 
   await b.close();
   notes.forEach(n => console.log('· ' + n));
   if (problems.length) { console.log(`\n결과: 문제 ${problems.length}건`); problems.forEach(x => console.log(' - ' + x)); process.exit(1); }
-  console.log('\n결과: 통과 (계정 4종 × 화면 8개 × PC·모바일, 계절 배너, 댓글, 제출 현황, 엑셀 내보내기, 폼 열기, 승인 대기·로그인·비밀번호 만들기)');
+  console.log('\n결과: 통과 (계정 4종 × 화면 9개 × PC·모바일, 계절 배너, 알림, 댓글, 제출 현황, 엑셀 내보내기, 폼 열기, 승인 대기·로그인·비밀번호 만들기)');
 })();

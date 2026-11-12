@@ -95,6 +95,7 @@ python3 -m http.server 3000
 | `upgrade-005-ax-board.sql` | 자유 형식 **AX 실적** 게시판, 팀원 파트(디자인/퍼블리싱/기타) |
 | `upgrade-006-invite-code.sql` | 초대 코드로 본인이 비밀번호 만들기, 관리자 승인 |
 | `upgrade-007-ax-comments.sql` | **AX 실적 글 댓글** (작성자·관리자 작성, 수정은 본인만, 삭제는 본인 또는 관리자, 열람 전용은 읽기만) |
+| `upgrade-008-alerts.sql` | **사이트 안 알림**의 읽음 시각을 계정별로 저장 (PC·휴대폰에서 함께 읽음 처리). 실행 전에는 기기별로만 저장됩니다 |
 
 새로 설치하는 경우에는 `schema.sql` + `seed.sql` 만 실행하면 모두 포함돼 있습니다.
 

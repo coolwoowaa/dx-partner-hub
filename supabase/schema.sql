@@ -175,6 +175,13 @@ create table if not exists public.ax_comments (
 );
 create index if not exists ax_comments_post_idx on public.ax_comments (post_id, created_at);
 
+-- 계정별 상태: 사이트 안 알림을 마지막으로 확인한 시각 (본인 것만 읽고 씀)
+create table if not exists public.user_state (
+  user_id        uuid primary key default auth.uid() references public.profiles(id) on delete cascade,
+  alerts_seen_at timestamptz not null default now(),
+  updated_at     timestamptz not null default now()
+);
+
 create index if not exists vacations_dates_idx on public.vacations (start_date, end_date);
 create index if not exists ax_reports_month_idx on public.ax_reports (month);
 
@@ -400,6 +407,22 @@ drop trigger if exists ax_comments_fill on public.ax_comments;
 create trigger ax_comments_fill before insert or update on public.ax_comments
   for each row execute function public.comment_fill();
 
+create or replace function public.user_state_fill() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'INSERT' then
+    new.user_id := coalesce(auth.uid(), new.user_id);
+  else
+    new.user_id := old.user_id;
+  end if;
+  new.alerts_seen_at := now();
+  new.updated_at := now();
+  return new;
+end $$;
+drop trigger if exists user_state_fill on public.user_state;
+create trigger user_state_fill before insert or update on public.user_state
+  for each row execute function public.user_state_fill();
+
 -- ---------------------------------------------------------------------
 -- 4. RLS (행 단위 권한)
 -- ---------------------------------------------------------------------
@@ -491,6 +514,18 @@ create policy comments_update on public.ax_comments for update to authenticated
 create policy comments_delete on public.ax_comments for delete to authenticated
   using (public.is_admin() or (public.my_role() = 'partner' and created_by = auth.uid()));
 
+-- 알림 확인 시각: 본인 것만 읽고 씀 (관리자도 다른 사람 것은 못 봄). 계정·시각은 트리거가 채움
+alter table public.user_state enable row level security;
+drop policy if exists user_state_read   on public.user_state;
+drop policy if exists user_state_insert on public.user_state;
+drop policy if exists user_state_update on public.user_state;
+create policy user_state_read   on public.user_state for select to authenticated using (user_id = auth.uid());
+create policy user_state_insert on public.user_state for insert to authenticated
+  with check (user_id = auth.uid() and public.is_member());
+create policy user_state_update on public.user_state for update to authenticated
+  using (user_id = auth.uid() and public.is_member())
+  with check (user_id = auth.uid() and public.is_member());
+
 -- ---------------------------------------------------------------------
 -- 5. 첨부파일 저장소 (비공개 버킷, 파일당 50MB)
 --    경로 규칙: notices/...                 DX 관리자만
@@ -532,7 +567,7 @@ create policy hub_files_delete on storage.objects for delete to authenticated
 do $$
 declare t text;
 begin
-  foreach t in array array['companies','profiles','members','notices','vacations','ax_reports','ax_reviews','ax_posts','ax_comments'] loop
+  foreach t in array array['companies','profiles','members','notices','vacations','ax_reports','ax_reviews','ax_posts','ax_comments','user_state'] loop
     begin
       execute format('alter publication supabase_realtime add table public.%I', t);
     exception when duplicate_object then null;

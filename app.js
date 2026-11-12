@@ -28,7 +28,7 @@ const ROLES = {admin:'DX 관리자', partner:'협력사', viewer:'열람 전용'
 const DOW = ['일','월','화','수','목','금','토'];
 const BUCKET = 'attachments';
 const MAX_FILE = 50 * 1048576;
-const ROUTES = ['home','notice','leave','ax','aiimg','team','users','account'];
+const ROUTES = ['home','alerts','notice','leave','ax','aiimg','team','users','account'];
 const PARTS = {design:'디자인', publishing:'퍼블리싱', common:'공통'};
 const PART_HUE = {design:'blue', publishing:'teal', common:'orange'};
 const MEMBER_PARTS = {design:'디자인', publishing:'퍼블리싱', etc:'기타'};
@@ -46,7 +46,7 @@ const sb = configured && window.supabase ? window.supabase.createClient(cfg.SUPA
 const now = new Date();
 const S = {
   route:'home', session:null, me:null, role:'pending', myCompany:null, isAdmin:false,
-  notices:[], vacations:[], members:[], companies:[], ax:[], reviews:{}, profiles:{}, allowed:[], posts:[], comments:[], commentsOff:false,
+  notices:[], vacations:[], members:[], companies:[], ax:[], reviews:{}, profiles:{}, allowed:[], posts:[], comments:[], commentsOff:false, seenAt:null, seenDb:false, alertPrev:null,
   loaded:{}, loadErr:false,
   cal:{y:now.getFullYear(), m:now.getMonth()}, coFilter:'all',
   axYear:now.getFullYear(), axMonth:null, axCo:'all', axFilter:'pending', noticeQ:'', noticeCat:'all',
@@ -177,6 +177,7 @@ const MAP = {
   ax_reports:r => ({id:r.id, companyId:r.company_id, memberId:r.member_id, month:r.month, aiImage:r.ai_image, aiWork:r.ai_work, total:r.total, note:r.note, attachments:r.attachments||[], submittedBy:r.submitted_by, submittedAt:r.submitted_at, createdAt:r.created_at}),
   ax_reviews:r => ({id:r.report_id, status:r.status, comment:r.comment, reviewedBy:r.reviewed_by, reviewedAt:r.reviewed_at}),
   ax_comments: r => ({id:r.id, postId:r.post_id, body:r.body, createdBy:r.created_by, createdAt:r.created_at, updatedAt:r.updated_at}),
+  user_state: r => ({userId:r.user_id, seenAt:r.alerts_seen_at}),
   allowed_emails: r => ({email:r.email, name:r.name, role:r.role, companyId:r.company_id, inviteCode:r.invite_code || '', createdAt:r.created_at})
 };
 async function load(table){
@@ -184,6 +185,7 @@ async function load(table){
   if (table==='companies') q = q.order('sort').order('created_at');
   const {data, error} = await q.limit(5000);
   if (error && table==='ax_comments') { S.commentsOff = true; S.loaded[table] = true; syncComments(); return; }  // DB 업그레이드(007) 전
+  if (error && table==='user_state') { S.seenDb = false; S.loaded[table] = true; render(); return; }  // DB 업그레이드(008) 전: 읽음 시각을 이 기기에만 저장
   if (error) { S.loadErr = true; render(); return; }
   const rows = data.map(MAP[table]);
   switch (table) {
@@ -199,6 +201,7 @@ async function load(table){
     case 'ax_reviews': { const r = {}; rows.forEach(x => r[x.id] = x); S.reviews = r; break; }
     case 'ax_posts': S.posts = rows; break;
     case 'ax_comments': S.comments = rows; S.commentsOff = false; break;
+    case 'user_state': { S.seenDb = true; const mine = rows.find(r => r.userId===S.me.id); if (mine) S.seenAt = ts(mine.seenAt); break; }
     case 'allowed_emails': S.allowed = rows; break;
   }
   S.loaded[table] = true;
@@ -208,7 +211,7 @@ async function load(table){
 const reloadT = {};
 function reload(table){ clearTimeout(reloadT[table]); reloadT[table] = setTimeout(() => load(table), 250); }
 function loadAll(){
-  ['companies','profiles','members','notices','vacations','ax_reports','ax_reviews','ax_posts','ax_comments'].forEach(load);
+  ['companies','profiles','members','notices','vacations','ax_reports','ax_reviews','ax_posts','ax_comments','user_state'].forEach(load);
   if (S.isAdmin) load('allowed_emails');
   sb.channel('hub-changes')
     .on('postgres_changes', {event:'*', schema:'public'}, p => { if (MAP[p.table]) reload(p.table); })
@@ -293,14 +296,18 @@ function doRender(){
   $('#nav-users').hidden = !S.isAdmin;
   const pc = pendingCount(), cnt = $('#nav-ax-cnt');
   cnt.hidden = !(S.isAdmin && pc); cnt.textContent = pc;
+  if (S.route !== 'alerts') S.alertPrev = null;
+  else if (S.alertPrev == null && S.loaded.user_state) S.alertPrev = seenAt();   // 알림 화면에 들어온 순간의 기준(이번 방문 동안 '새 알림' 표시 유지)
   $('#me').innerHTML = `${userAv(S.me.id, 32)}<div><b>${esc(S.me.name || S.me.email)}</b><small>${roleLabel(S.role, S.myCompany)}${S.myCompany ? ' · ' + esc(coName(S.myCompany)) : ''}</small></div>`;
   hydrate($('#me'));
-  const views = {home:vHome, notice:vNotice, leave:vLeave, ax:vAxBoard, aiimg:vAx, team:vTeam, users:vUsers, account:vAccount};
+  const views = {home:vHome, alerts:vAlerts, notice:vNotice, leave:vLeave, ax:vAxBoard, aiimg:vAx, team:vTeam, users:vUsers, account:vAccount};
   const v = $('#view');
   v.classList.toggle('dash', S.route==='home');
   v.innerHTML = banner() + (views[S.route] || vHome)();
   if (S.route==='notice') renderNoticeList();
   if (S.route==='home') mountSeason($('#season-slot'));
+  if (S.route==='alerts' && S.loaded.user_state) markAlertsSeen();
+  syncAlertBadge();
   hydrate(v);
 }
 function banner(){
@@ -640,7 +647,7 @@ function vHome(){
   const nlist = sortedNotices().filter(n => S.homeNotice==='all' || n.category==='must').slice(0, 5);
 
   return `
-  <div class="dash-head"><div><p class="muted" style="margin:0 0 2px">${now.getFullYear()}년 ${now.getMonth()+1}월 ${now.getDate()}일 ${DOW[now.getDay()]}요일</p><h1>안녕하세요, ${esc(hello)}님</h1></div>
+  <div class="dash-head"><div><p class="muted" style="margin:0 0 2px">${now.getFullYear()}년 ${now.getMonth()+1}월 ${now.getDate()}일 ${DOW[now.getDay()]}요일${unreadAlerts() ? ` · <a class="al-link" href="#alerts">새 알림 ${unreadAlerts()}건</a>` : ''}</p><h1>안녕하세요, ${esc(hello)}님</h1></div>
     <div class="row">${canW() ? `<button class="btn" data-act="vac-new">휴가 등록</button><button class="btn" data-act="ax-new">AI 이미지 제출</button><button class="btn pri" data-act="post-new">+ AX 실적 올리기</button>` : ''}</div></div>
 
   <div id="season-slot" class="ss-slot"></div>
@@ -667,6 +674,62 @@ function vHome(){
         return `<button class="barrow" data-act="ax-goto" data-month="${rm}" data-co="${esc(c.id)}"><span class="bn"><span class="dot" style="color:${coColor(c.id)}"></span> ${esc(c.name)}</span><span class="bt"><span style="width:${r||0}%;background:${coColor(c.id)}"></span></span><span class="bv num">${r==null ? '–' : r+'%'}</span></button>`; }).join('')}
         ${smRm.n ? `<div class="barrow total"><span class="bn">협력사 합계</span><span class="bt"><span style="width:${pct(smRm.ai,smRm.tot)||0}%"></span></span><span class="bv num">${pct(smRm.ai,smRm.tot)}%</span></div>` : ''}</div></section>
   </div>`;
+}
+
+/* ---------- 알림 (사이트 안) ----------
+ * 알림 내용은 따로 저장하지 않고 이미 불러온 데이터에서 계산한다:
+ *   ① 내 AX 실적 글, 내가 댓글 단 글의 새 댓글  ② 내가 제출했거나 내 소속 협력사의 AI 이미지 실적 보완 요청  ③ 새 공지
+ * '마지막으로 알림을 확인한 시각'보다 뒤에 생긴 것이 새 알림이다. 시각은 user_state(DB, 계정별)에 저장하고,
+ * DB 업그레이드(008) 전이거나 저장에 실패하면 이 기기(localStorage)에만 저장한다.
+ */
+const ALERT_DAYS = 30;
+const seenKey = () => `hub.alertsSeen.${S.me.id}`;
+const seenAt = () => S.seenAt ?? (Date.now() - 7*864e5);   // 처음 쓰는 계정은 최근 7일 치를 새 알림으로 본다
+const clip = (t, n) => { const x = String(t || '').replace(/\s+/g, ' ').trim(); return x.length > n ? x.slice(0, n) + '…' : x; };
+function alertItems(){
+  const me = S.me.id, items = [], postById = {};
+  S.posts.forEach(p => postById[p.id] = p);
+  const joined = {};   // 내가 댓글 단 글 → 내 첫 댓글 시각
+  S.comments.forEach(c => { if (c.createdBy===me) joined[c.postId] = Math.min(joined[c.postId] ?? Infinity, ts(c.createdAt)); });
+  S.comments.forEach(c => {
+    const p = postById[c.postId]; if (!p || c.createdBy===me) return;
+    const own = p.createdBy===me; if (!own && !(ts(c.createdAt) > joined[c.postId])) return;
+    items.push({k:'c'+c.id, at:c.createdAt, act:'post-view', id:p.id, chip:['댓글','acc'], title:`${nameOf(c.createdBy)} 님이 ${own ? '내 글' : '내가 댓글 단 글'}에 댓글을 남겼어요`, sub:`${clip(p.title, 40)} · ${clip(c.body, 70)}`});
+  });
+  S.ax.forEach(a => {
+    const r = S.reviews[a.id]; if (!r || statusOf(a)!=='revise' || r.reviewedBy===me) return;
+    if (!(a.submittedBy===me || (S.myCompany && a.companyId===S.myCompany))) return;
+    items.push({k:'r'+a.id, at:r.reviewedAt, todo:true, act:'ax-view', id:a.id, chip:['보완 요청','bad'], title:`${axWho(a)} · ${monthLabel(a.month)} AI 이미지 실적에 보완 요청이 있어요`, sub:clip(r.comment, 90) || '검토 의견을 확인하고 다시 제출해 주세요.'});
+  });
+  S.notices.forEach(n => { if (n.createdBy===me) return;
+    items.push({k:'n'+n.id, at:n.createdAt, act:'notice-view', id:n.id, chip: n.category==='must' ? ['필독 공지','bad'] : ['새 공지',''], title:n.title, sub:`${nameOf(n.createdBy)} · ${NCATS[n.category] || '공지'}${clip(n.body, 60) ? ' · ' + clip(n.body, 60) : ''}`}); });
+  const since = Date.now() - ALERT_DAYS*864e5;
+  return items.map(i => ({...i, t: ts(i.at)})).filter(i => i.todo || i.t > since).sort((a,b) => b.t - a.t).slice(0, 80);
+}
+const unreadAlerts = () => { const s = seenAt(); return alertItems().filter(i => i.t > s).length; };
+function syncAlertBadge(){
+  const n = unreadAlerts(), el = $('#nav-alert-cnt'); if (!el) return;
+  el.hidden = !n; el.textContent = n > 99 ? '99+' : n;
+  el.setAttribute('aria-label', `새 알림 ${n}건`);
+}
+function markAlertsSeen(){
+  if (S.seenAt && !unreadAlerts()) return;
+  S.seenAt = Date.now(); lsSet(seenKey(), String(S.seenAt));
+  if (S.seenDb) sb.from('user_state').upsert({user_id: S.me.id}, {onConflict:'user_id'}).select('alerts_seen_at')
+    .then(({data}) => { if (data?.[0]?.alerts_seen_at) { S.seenAt = ts(data[0].alerts_seen_at); syncAlertBadge(); } }, () => {});
+}
+function vAlerts(){
+  const items = alertItems(), base = S.alertPrev ?? seenAt(), isNew = i => i.t > base;
+  const row = i => `<button class="li al ${isNew(i) ? 'new' : ''}" data-act="${i.act}" data-id="${esc(i.id)}"><span class="chip ${i.chip[1]}">${i.chip[0]}</span>
+    <span class="grow"><span class="ttl">${isNew(i) ? '<span class="nbadge" aria-label="새 알림">N</span> ' : ''}${esc(i.title)}</span><span class="meta">${esc(i.sub)}</span></span><span class="num muted al-t">${fmtWhen(i.at)}</span></button>`;
+  const todo = items.filter(i => i.todo), rest = items.filter(i => !i.todo), newN = items.filter(isNew).length;
+  const wait = loading('ax_comments') || loading('notices') || loading('ax_reviews');
+  return `<div class="head"><div><h1>알림</h1><p>내 글과 내가 댓글 단 글의 새 댓글, AI 이미지 실적 보완 요청, 새 공지를 모아 보여 줍니다. 최근 ${ALERT_DAYS}일 기준이며, 이 화면을 열면 읽은 것으로 표시됩니다.</p></div>
+    <span class="muted" style="font-size:12.5px">${newN ? `새 알림 <b class="num" style="color:var(--bad)">${newN}</b>건` : '새 알림이 없어요'}</span></div>
+  ${S.isAdmin && S.loaded.user_state && !S.seenDb ? '<div class="banner">읽음 표시가 지금은 이 기기에만 저장됩니다. DB 업그레이드(upgrade-008)를 실행하면 PC와 휴대폰이 함께 맞춰집니다.</div>' : ''}
+  ${todo.length ? `<div class="sec" style="margin-top:0"><div class="sec-h"><h2>확인이 필요해요</h2><span class="muted" style="font-size:12px">다시 제출하면 목록에서 사라집니다</span></div><div class="box list">${todo.map(row).join('')}</div></div>` : ''}
+  <div class="sec" ${todo.length ? '' : 'style="margin-top:0"'}><div class="sec-h"><h2>최근 소식</h2><span class="muted" style="font-size:12px">${rest.length}건</span></div>
+    <div class="box list">${rest.length ? rest.map(row).join('') : `<div class="empty">${wait ? '불러오는 중…' : '<b>아직 소식이 없어요</b>내 글에 댓글이 달리거나 새 공지가 올라오면 여기에 표시됩니다.'}</div>`}</div></div>`;
 }
 
 /* ---------- NOTICES ---------- */
@@ -1866,6 +1929,7 @@ async function start(session){
   if (error) { S.session = null; showGate('login'); gateMsg(errMsg(error), 'bad'); return; }
   if (!prof || prof.role==='pending') { showGate('pending', session.user.email); return; }
   S.me = {id:prof.id, email:prof.email, name:prof.name};
+  S.seenAt = Number(lsGet(seenKey())) || null;
   S.role = prof.role; S.myCompany = prof.company_id; S.isAdmin = prof.role==='admin';
   $('#gate').hidden = true; $('#app').hidden = false;
   const h = location.hash.slice(1); S.route = ROUTES.includes(h) ? h : 'home';

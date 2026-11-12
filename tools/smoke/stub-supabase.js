@@ -6,6 +6,7 @@
  *   ?co=tribe|corp|dx                    partner 소속 (기본 tribe)
  *   ?name=관리자                          화면에 표시될 이름
  *   ?nosession=1                         로그인 전 화면(로그인·비밀번호 만들기)
+ *   ?missing=user_state,ax_comments      아직 DB 업그레이드를 안 한 상태 흉내(그 표를 읽고 쓰면 오류)
  * 시험 코드에서는 window.__DB 로 메모리 데이터를 읽고 쓸 수 있다.
  */
 (function () {
@@ -24,7 +25,8 @@
   rep('m1_2026-11', 'm1', 'tribe', 12, 6, 20, '2026-11-05T01:00:00+00:00', [{ path: 'ax/tribe/a.png', name: '증빙.png', type: 'image/png', size: 1 }]);
   rv.push({ report_id: 'm1_2026-11', status: 'approved', comment: '', reviewed_by: 'u1', reviewed_at: '2026-11-06T01:00:00+00:00' });
   rep('m2_2026-11', 'm2', 'tribe', 8, 3, 15, '2026-11-05T02:00:00+00:00');
-  rv.push({ report_id: 'm2_2026-11', status: 'revise', comment: '증빙 파일을 첨부해 주세요.', reviewed_by: 'u1', reviewed_at: '2026-11-06T02:00:00+00:00' });
+  // 알림 시험용: 다른 관리자(u5)가 2시간 전에 보완 요청 → 디지털 소속 작성자에게 새 알림
+  rv.push({ report_id: 'm2_2026-11', status: 'revise', comment: '증빙 파일을 첨부해 주세요.', reviewed_by: 'u5', reviewed_at: new Date(Date.now() - 7200e3).toISOString() });
   rep('m4_2026-11', 'm4', 'corp', 5, 2, 18, '2026-11-07T02:00:00+00:00', [{ path: 'ax/corp/b.pdf', name: '실적.pdf', type: 'application/pdf', size: 1 }]);
 
   const P = (id, title, summary, part, status, usable, tools, category, priority, s, e, files, upd, created, by) => ({ id, title, summary, body: '진행 과정 메모\n참고: https://example.com', part, company_id: 'dx', status, usable, tools, category, priority, start_date: s, end_date: e, attachments: files, created_by: by || 'u1', created_at: created || upd, updated_at: upd });
@@ -35,11 +37,13 @@
     profiles: [me,
       { id: 'u2', email: 'digital@test.kr', name: '디지털 담당', role: 'partner', company_id: 'tribe', linked: true, created_at: '2026-11-06T00:00:00Z' },
       { id: 'u3', email: 'corp@test.kr', name: '기업 담당', role: 'partner', company_id: 'corp', linked: true, created_at: '2026-11-06T00:00:00Z' },
+      { id: 'u5', email: 'admin2@test.kr', name: 'DX 관리자 B', role: 'admin', company_id: null, linked: true, created_at: '2026-11-06T00:00:00Z' },
       { id: 'u4', email: 'walkin@test.kr', name: '', role: 'pending', company_id: null, linked: false, created_at: '2026-11-07T00:00:00Z' }],
     allowed_emails: [
       { email: 'me@test.kr', name: me.name, role: 'admin', company_id: null, invite_code: 'AAAAAA' },
       { email: 'digital@test.kr', name: '디지털 담당', role: 'partner', company_id: 'tribe', invite_code: 'BBBBBB' },
       { email: 'corp@test.kr', name: '기업 담당', role: 'partner', company_id: 'corp', invite_code: 'CCCCCC' },
+      { email: 'admin2@test.kr', name: 'DX 관리자 B', role: 'admin', company_id: null, invite_code: 'DDDDDD' },
       { email: 'later@test.kr', name: '가입 전 작성자', role: 'partner', company_id: 'corp', invite_code: 'TEST22' }],
     members: [
       { id: 'm1', name: '디자이너 A', company_id: 'tribe', title: '2D', part: 'design' }, { id: 'm2', name: '디자이너 B', company_id: 'tribe', title: '3D', part: 'design' },
@@ -65,12 +69,15 @@
     ax_comments: [
       { id: 'c1', post_id: 'p1', body: '영상 잘 봤습니다. 기획서 넣는 부분을 조금 더 천천히 보여 주시면 좋겠어요.', created_by: 'u2', created_at: '2026-11-03T02:10:00Z', updated_at: '2026-11-03T02:10:00Z' },
       { id: 'c2', post_id: 'p1', body: '다음 버전에 반영할게요. 참고 링크: https://example.com/guide', created_by: 'u1', created_at: '2026-11-03T05:40:00Z', updated_at: '2026-11-03T06:10:00Z' },
-      { id: 'c3', post_id: 'p7', body: '명도대비 기준은 KWCAG 4.5:1로 잡으면 될까요?', created_by: 'u3', created_at: '2026-11-06T01:00:00Z', updated_at: '2026-11-06T01:00:00Z' }
+      { id: 'c3', post_id: 'p7', body: '명도대비 기준은 KWCAG 4.5:1로 잡으면 될까요?', created_by: 'u3', created_at: '2026-11-06T01:00:00Z', updated_at: '2026-11-06T01:00:00Z' },
+      // 알림 시험용: 방금(1시간 전) 달린 댓글 → 처음 열면 새 알림 1건
+      { id: 'c4', post_id: 'p6', body: '협력사에서도 잘 쓰고 있습니다. 모바일에서도 보기 편해요.', created_by: 'u3', created_at: new Date(Date.now() - 3600e3).toISOString(), updated_at: new Date(Date.now() - 3600e3).toISOString() }
     ]
   };
   window.__DB = DB;
 
-  const KEY = { ax_reviews: 'report_id', allowed_emails: 'email' };
+  const KEY = { ax_reviews: 'report_id', allowed_emails: 'email', user_state: 'user_id' };
+  const missing = (q.get('missing') || '').split(',').filter(Boolean);
   const uid = () => 'x' + Math.random().toString(36).slice(2, 10);
   function qb(table) {
     let op = 'select', payload = null, single = false; const filters = [];
@@ -81,6 +88,7 @@
       upsert(p) { op = 'upsert'; payload = p; return b; }, delete() { op = 'delete'; return b; },
       then(res, rej) {
         const rows = DB[table] || (DB[table] = []), key = KEY[table] || 'id';
+        if (missing.includes(table)) return Promise.resolve({ data: null, error: { code: '42P01', message: `relation "public.${table}" does not exist` } }).then(res, rej);
         const hit = r => filters.every(([c, v]) => r[c] === v); let data;
         if (op === 'select') { data = rows.filter(hit).map(r => ({ ...r })); if (single) data = data[0] || null; }
         else if (op === 'insert' || op === 'upsert') {
@@ -89,6 +97,7 @@
           if (table === 'ax_reports') { r.submitted_by = me.id; r.submitted_at = now; }
           if (table === 'ax_reviews') { r.reviewed_by = me.id; r.reviewed_at = now; }
           if (table === 'allowed_emails' && !r.invite_code) r.invite_code = 'NEW234';
+          if (table === 'user_state') { delete r.id; delete r.created_by; r.user_id = me.id; r.alerts_seen_at = now; }
           const i = rows.findIndex(x => x[key] === r[key]);
           if (op === 'upsert' && i >= 0) rows[i] = { ...rows[i], ...r }; else rows.push(r);
           data = [r];

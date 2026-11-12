@@ -5,7 +5,7 @@
 
 ## 1. DB 규칙 시험 — `tools/pg/`
 
-로컬 Postgres 16에 Supabase를 흉내 낸 스키마(`mock-supabase.sql`)를 만들고 실제 `supabase/*.sql`을 실행한 뒤, 권한 점검(`rls-check.sql`, 65개 항목)을 돌린다.
+로컬 Postgres 16에 Supabase를 흉내 낸 스키마(`mock-supabase.sql`)를 만들고 실제 `supabase/*.sql`을 실행한 뒤, 권한 점검(`rls-check.sql`, 75개 항목)을 돌린다.
 
 ```bash
 tools/pg/run-sql-test.sh                                  # 새 설치: schema.sql ×2 → seed.sql → 권한 점검
@@ -29,8 +29,8 @@ node tools/smoke/capture.js <폴더> [표시 이름]  # Figma AX과제용 캡처
 ```
 
 - `결과: 통과`가 나오면 끝. 문제가 있으면 목록이 나오고 종료 코드 1.
-- 점검 항목: 페이지 오류·콘솔 오류 0건, 390px에서 가로 스크롤 없음, 각 화면 제목 렌더, 홈 계절 배너(글귀 30~50자·수채화 캔버스·다시 그려도 유지), AX 실적 댓글(권한별 입력창·등록), AI 이미지 제출 현황(미제출·보완 요청 표시, 안내 문구 복사), 엑셀 내보내기(권한별 버튼, CSV 머리글·BOM, 전체 백업 ZIP 구조·CRC), 권한별 폼 열림, 사용자 관리는 관리자만, 틀린 초대 코드 안내, 초대 코드 대문자·공백 정리.
-- 가짜 계정: URL `?role=admin|partner|viewer|pending&co=tribe|corp|dx&name=…`, 로그인 전 화면은 `?nosession=1`. 시험 코드에서 `window.__DB`로 데이터를 읽고 바꿀 수 있다.
+- 점검 항목: 페이지 오류·콘솔 오류 0건, 390px에서 가로 스크롤 없음, 각 화면 제목 렌더, 홈 계절 배너(글귀 30~50자·수채화 캔버스·다시 그려도 유지), 알림(새 알림 숫자, 열면 읽음 처리, 보완 요청 표시, DB 업그레이드 전에는 기기에 저장), AX 실적 댓글(권한별 입력창·등록), AI 이미지 제출 현황(미제출·보완 요청 표시, 안내 문구 복사), 엑셀 내보내기(권한별 버튼, CSV 머리글·BOM, 전체 백업 ZIP 구조·CRC), 권한별 폼 열림, 사용자 관리는 관리자만, 틀린 초대 코드 안내, 초대 코드 대문자·공백 정리.
+- 가짜 계정: URL `?role=admin|partner|viewer|pending&co=tribe|corp|dx&name=…`, DB 업그레이드 전 상태는 `?missing=<표 이름,…>`, 로그인 전 화면은 `?nosession=1`. 시험 코드에서 `window.__DB`로 데이터를 읽고 바꿀 수 있다.
 - 새 화면·폼을 만들면 `smoke.js`의 `ROUTES`·`FORMS`에 추가한다. 새 테이블을 쓰면 `stub-supabase.js`의 `DB`에 데모 데이터를 넣는다.
 
 ## 3. Figma 캡처 교체

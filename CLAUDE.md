@@ -28,15 +28,15 @@ DX디자인팀(정규직)과 협력사(디지털, 기업)가 함께 쓰는 업�
 | `vendor/supabase-2.117.3.js` | supabase-js UMD 빌드를 저장소에 포함(사내망 CDN 차단 대비) |
 | `supabase/schema.sql` | 전체 스키마(새 설치용). 재실행 안전하게 유지 |
 | `supabase/seed.sql` | 그룹 3개, 첫 관리자, 2026년 4~10월 AI 이미지 이관 실적 |
-| `supabase/upgrade-00N-*.sql` | 이미 운영 중인 DB에 적용하는 변경분. 006까지 적용됨, 007(AX 실적 댓글)은 운영 DB 실행 확인 필요 |
+| `supabase/upgrade-00N-*.sql` | 이미 운영 중인 DB에 적용하는 변경분. 006까지 적용됨, 007(AX 실적 댓글)·008(알림 읽음 시각)은 운영 DB 실행 확인 필요 |
 | `vercel.json` / `.vercelignore` | 보안 헤더, 검색 노출 차단 / 배포 제외 목록 |
 | `tools/` | 시험 도구(로컬 DB 권한 점검, 가짜 Supabase 화면 점검, Figma 캡처). 배포 제외 |
 
-화면(라우트): `home`(대시보드) · `notice` · `leave`(휴가) · `ax`(AX 실적 게시판) · `aiimg`(AI 이미지 제작) · `team`(협력사·팀원) · `users`(사용자 관리, 관리자) · `account`(내 계정)
+화면(라우트): `home`(대시보드) · `alerts`(알림) · `notice` · `leave`(휴가) · `ax`(AX 실적 게시판) · `aiimg`(AI 이미지 제작) · `team`(협력사·팀원) · `users`(사용자 관리, 관리자) · `account`(내 계정)
 
 ## 3. 데이터와 권한
 
-테이블: `companies`(그룹, kind = internal 정규직 / partner 협력사) · `allowed_emails`(등록 사용자 + 초대 코드) · `profiles`(로그인 계정, linked) · `members`(휴가·실적용 팀원 명단, part = design/publishing/etc) · `notices` · `vacations` · `ax_posts`(자유 형식 AX 실적) · `ax_comments`(AX 실적 글 댓글, 글 삭제 시 함께 삭제) · `ax_reports`(AI 이미지 월 실적, 팀원×월, member_id 없으면 회사 단위 이관분) · `ax_reviews`(검토) · Storage 버킷 `attachments`(비공개).
+테이블: `companies`(그룹, kind = internal 정규직 / partner 협력사) · `allowed_emails`(등록 사용자 + 초대 코드) · `profiles`(로그인 계정, linked) · `members`(휴가·실적용 팀원 명단, part = design/publishing/etc) · `notices` · `vacations` · `ax_posts`(자유 형식 AX 실적) · `ax_comments`(AX 실적 글 댓글, 글 삭제 시 함께 삭제) · `ax_reports`(AI 이미지 월 실적, 팀원×월, member_id 없으면 회사 단위 이관분) · `ax_reviews`(검토) · `user_state`(계정별 알림 확인 시각, 본인만 읽고 씀) · Storage 버킷 `attachments`(비공개).
 
 | 권한 (`profiles.role`) | 할 수 있는 일 |
 |---|---|
@@ -70,6 +70,7 @@ DX디자인팀(정규직)과 협력사(디지털, 기업)가 함께 쓰는 업�
 - 모바일(≤860px)에서는 사이드바가 위쪽 가로 메뉴가 된다. 화면 폭 390px에서 가로 스크롤이 생기지 않아야 한다.
 - 공휴일은 `app.js` 맨 위 `HOLIDAYS`에 있다(현재 2026~2027년, 2026년부터 노동절·제헌절 포함). 연말에 다음 해를 추가한다.
 - 엑셀 내보내기(`exportSet()`·`toCsv()`·`zipStore()`): 화면에 불러온 데이터를 CSV(UTF-8 BOM)로 저장한다. 새 테이블·열을 만들면 내보내기 열도 함께 맞춘다. `=`·`+`·`-`·`@`로 시작하는 값은 수식으로 실행되지 않게 `csvCell()`이 `'`를 붙인다. 버튼은 관리자·작성자에게만 보인다(데이터 자체는 열람 권한이 있으면 볼 수 있으므로 보안 장치는 아님).
+- 사이트 안 알림(`alertItems()`·`markAlertsSeen()`): 알림 내용은 저장하지 않고 불러온 데이터에서 계산한다(내 글·내가 댓글 단 글의 새 댓글, 내가 제출했거나 내 소속 협력사 실적의 보완 요청, 새 공지). '마지막 확인 시각'보다 새것이 새 알림이고, 알림 화면을 열면 읽음 처리된다. 시각은 `user_state`에 저장하며 008 실행 전에는 기기(localStorage)에만 저장한다. 새 종류의 알림은 `alertItems()`에 추가한다.
 - AI 이미지 제출 현황(`submitState()`·`remindText()`): 기준 월의 미제출·보완 요청 대상과 메신저용 안내 문구. 회사 단위 이관 기록이 있는 달은 미제출을 따지지 않고, 이번 달은 '제출 전'으로 표시한다.
 - 홈 계절 수채화 배너: `app.js`의 `SEASONS`(계절별 구성)·`QUOTES`(매일 바뀌는 글귀, 30~50자)·`paintSeason()`. 색은 `--sp-*`(봄)·`--su-*`(여름)·`--au-*`(가을)·`--wi-*`(겨울)·`--ss-*` 토큰. 움직임은 CSS transform만 쓰고, `prefers-reduced-motion`이면 멈춘다.
 
@@ -111,6 +112,6 @@ DX디자인팀(정규직)과 협력사(디지털, 기업)가 함께 쓰는 업�
 ## 9. 남은 일 (제안했으나 미착수)
 
 - 월간 AX 리포트 자동 생성
-- 보완 요청·새 공지 알림 (메일 서버 연결 후)
+- 보완 요청·새 공지 **메일** 알림 (메일 서버 연결 후. 사이트 안 알림은 완료)
 - 기존 DX 현황판의 AX 진행 현황 데이터 이관 (CSV 받으면)
 - 모바일 홈에 업무관리 바로가기 노출 여부 확인
