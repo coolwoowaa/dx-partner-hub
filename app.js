@@ -6,11 +6,16 @@
 'use strict';
 
 /* ---------- constants ---------- */
+// 2026년부터 노동절(5/1)·제헌절(7/17)도 공휴일이며 대체공휴일이 적용된다. 다음 해는 연말에 추가한다.
 const HOLIDAYS = {
   '2026-01-01':'신정','2026-02-16':'설날 연휴','2026-02-17':'설날','2026-02-18':'설날 연휴','2026-03-01':'삼일절','2026-03-02':'대체공휴일',
-  '2026-05-05':'어린이날','2026-05-24':'부처님오신날','2026-05-25':'대체공휴일','2026-06-03':'지방선거일','2026-06-06':'현충일',
-  '2026-08-15':'광복절','2026-08-17':'대체공휴일','2026-09-24':'추석 연휴','2026-09-25':'추석','2026-09-26':'추석 연휴',
-  '2026-10-03':'개천절','2026-10-05':'대체공휴일','2026-10-09':'한글날','2026-12-25':'성탄절','2027-01-01':'신정','2027-03-01':'삼일절'
+  '2026-05-01':'노동절','2026-05-05':'어린이날','2026-05-24':'부처님오신날','2026-05-25':'대체공휴일','2026-06-03':'지방선거일','2026-06-06':'현충일',
+  '2026-07-17':'제헌절','2026-08-15':'광복절','2026-08-17':'대체공휴일','2026-09-24':'추석 연휴','2026-09-25':'추석','2026-09-26':'추석 연휴',
+  '2026-10-03':'개천절','2026-10-05':'대체공휴일','2026-10-09':'한글날','2026-12-25':'성탄절',
+  '2027-01-01':'신정','2027-02-06':'설날 연휴','2027-02-07':'설날','2027-02-08':'설날 연휴','2027-02-09':'대체공휴일','2027-03-01':'삼일절',
+  '2027-05-01':'노동절','2027-05-03':'대체공휴일','2027-05-05':'어린이날','2027-05-13':'부처님오신날','2027-06-06':'현충일',
+  '2027-07-17':'제헌절','2027-07-19':'대체공휴일','2027-08-15':'광복절','2027-08-16':'대체공휴일','2027-09-14':'추석 연휴','2027-09-15':'추석','2027-09-16':'추석 연휴',
+  '2027-10-03':'개천절','2027-10-04':'대체공휴일','2027-10-09':'한글날','2027-10-11':'대체공휴일','2027-12-25':'성탄절','2027-12-27':'대체공휴일'
 };
 const TYPES = {
   annual:{label:'연차',short:'연차',unit:1}, am:{label:'오전 반차',short:'오전반차',unit:.5}, pm:{label:'오후 반차',short:'오후반차',unit:.5},
@@ -41,7 +46,7 @@ const sb = configured && window.supabase ? window.supabase.createClient(cfg.SUPA
 const now = new Date();
 const S = {
   route:'home', session:null, me:null, role:'pending', myCompany:null, isAdmin:false,
-  notices:[], vacations:[], members:[], companies:[], ax:[], reviews:{}, profiles:{}, allowed:[], posts:[],
+  notices:[], vacations:[], members:[], companies:[], ax:[], reviews:{}, profiles:{}, allowed:[], posts:[], comments:[], commentsOff:false,
   loaded:{}, loadErr:false,
   cal:{y:now.getFullYear(), m:now.getMonth()}, coFilter:'all',
   axYear:now.getFullYear(), axMonth:null, axCo:'all', axFilter:'pending', noticeQ:'', noticeCat:'all',
@@ -90,6 +95,10 @@ const toolHue = t => (TOOLS.find(x => x[0]===t) || [0,'teal'])[1];
 const tint = (label, h, extra='') => `<span class="chip tint h-${h}" ${extra}>${esc(label)}</span>`;
 const toolChips = (tools, max) => { const l = tools || []; const shown = max ? l.slice(0, max) : l; return shown.map(t => tint(t, toolHue(t))).join('') + (max && l.length > max ? `<span class="chip">+${l.length-max}</span>` : ''); };
 const canEditPost = p => S.isAdmin || (S.role==='partner' && p.createdBy===S.me?.id);
+const cmtsOf = postId => S.comments.filter(c => c.postId===postId).sort((a,b) => ts(a.createdAt) - ts(b.createdAt));
+const cmtCount = postId => S.comments.reduce((n,c) => n + (c.postId===postId), 0);
+const cmtBadge = postId => { const n = cmtCount(postId); return n ? `<span class="cmt-n" title="댓글 ${n}개">댓글 ${n}</span>` : ''; };
+const fmtWhen = iso => { if (!iso) return ''; const d = new Date(iso), t = `${pad(d.getHours())}:${pad(d.getMinutes())}`; return ymd(d)===ymd(new Date()) ? `오늘 ${t}` : `${fmtTs(iso)} ${t}`; };
 const byUpdated = (a,b) => ts(b.updatedAt) - ts(a.updatedAt);
 const linkify = t => esc(t).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
 const shortDate = d => d ? `${d.slice(2,4)}.${d.slice(5,7)}.${d.slice(8,10)}` : '';
@@ -167,12 +176,14 @@ const MAP = {
   vacations: r => ({id:r.id, memberId:r.member_id, companyId:r.company_id, type:r.type, start:r.start_date, end:r.end_date, memo:r.memo, createdBy:r.created_by, createdAt:r.created_at}),
   ax_reports:r => ({id:r.id, companyId:r.company_id, memberId:r.member_id, month:r.month, aiImage:r.ai_image, aiWork:r.ai_work, total:r.total, note:r.note, attachments:r.attachments||[], submittedBy:r.submitted_by, submittedAt:r.submitted_at, createdAt:r.created_at}),
   ax_reviews:r => ({id:r.report_id, status:r.status, comment:r.comment, reviewedBy:r.reviewed_by, reviewedAt:r.reviewed_at}),
+  ax_comments: r => ({id:r.id, postId:r.post_id, body:r.body, createdBy:r.created_by, createdAt:r.created_at, updatedAt:r.updated_at}),
   allowed_emails: r => ({email:r.email, name:r.name, role:r.role, companyId:r.company_id, inviteCode:r.invite_code || '', createdAt:r.created_at})
 };
 async function load(table){
   let q = sb.from(table).select('*');
   if (table==='companies') q = q.order('sort').order('created_at');
   const {data, error} = await q.limit(5000);
+  if (error && table==='ax_comments') { S.commentsOff = true; S.loaded[table] = true; syncComments(); return; }  // DB 업그레이드(007) 전
   if (error) { S.loadErr = true; render(); return; }
   const rows = data.map(MAP[table]);
   switch (table) {
@@ -187,15 +198,17 @@ async function load(table){
     case 'ax_reports': S.ax = rows; break;
     case 'ax_reviews': { const r = {}; rows.forEach(x => r[x.id] = x); S.reviews = r; break; }
     case 'ax_posts': S.posts = rows; break;
+    case 'ax_comments': S.comments = rows; S.commentsOff = false; break;
     case 'allowed_emails': S.allowed = rows; break;
   }
   S.loaded[table] = true;
   render();
+  if (table==='ax_comments' || table==='profiles') syncComments();
 }
 const reloadT = {};
 function reload(table){ clearTimeout(reloadT[table]); reloadT[table] = setTimeout(() => load(table), 250); }
 function loadAll(){
-  ['companies','profiles','members','notices','vacations','ax_reports','ax_reviews','ax_posts'].forEach(load);
+  ['companies','profiles','members','notices','vacations','ax_reports','ax_reviews','ax_posts','ax_comments'].forEach(load);
   if (S.isAdmin) load('allowed_emails');
   sb.channel('hub-changes')
     .on('postgres_changes', {event:'*', schema:'public'}, p => { if (MAP[p.table]) reload(p.table); })
@@ -287,6 +300,7 @@ function doRender(){
   v.classList.toggle('dash', S.route==='home');
   v.innerHTML = banner() + (views[S.route] || vHome)();
   if (S.route==='notice') renderNoticeList();
+  if (S.route==='home') mountSeason($('#season-slot'));
   hydrate(v);
 }
 function banner(){
@@ -296,6 +310,269 @@ function banner(){
 }
 const loading = t => !S.loaded[t];
 const emptyRow = (cols, html) => `<tr><td colspan="${cols}"><div class="empty">${html}</div></td></tr>`;
+
+/* ---------- 계절 수채화 배너 (홈) ----------
+ * 계절(3~5 봄, 6~8 여름, 9~11 가을, 12~2 겨울)과 라이트/다크에 맞춰 수채화 풍경을 캔버스에 한 번 그리고,
+ * 꽃잎·잎·눈·반딧불이 같은 입자와 구름은 CSS 애니메이션(transform)으로만 움직인다.
+ * 홈 화면은 데이터가 바뀔 때마다 다시 그려지므로, 배너 노드는 한 번 만들어 두고 자리(#season-slot)에 옮겨 끼운다.
+ * 다시 끼울 때 애니메이션이 처음부터 시작하지 않도록 --t(경과 시간)만큼 delay 를 당긴다.
+ */
+const QUOTES = {  // 매일 하나씩 (계절 글귀 10 + 공통 40, 30~50자)
+  common: [
+    '작은 시도가 쌓이면 어느새 큰 변화가 됩니다. 오늘의 한 걸음을 믿어 보세요.',
+    '완벽한 계획보다 지금 시작하는 용기가 우리를 더 멀리 데려다줍니다.',
+    '함께 고민한 시간은 결과보다 오래 남아 팀을 단단하게 만듭니다.',
+    '서두르지 않아도 괜찮아요. 꾸준함은 언제나 속도를 이깁니다.',
+    '좋은 질문 하나가 열 개의 답보다 많은 것을 바꾸기도 합니다.',
+    '어제보다 조금 나아진 오늘이라면, 이미 충분히 잘하고 있는 거예요.',
+    '새로운 도구는 낯설지만, 익숙해지는 순간 나의 날개가 되어 줍니다.',
+    '실패는 멈춤이 아니라 방향을 다시 고르는 시간일 뿐입니다.',
+    '서로의 수고를 알아봐 주는 한마디가 하루의 온도를 바꿉니다.',
+    '디자인은 결국 사람을 향한 배려입니다. 오늘도 한 사람을 떠올려 봐요.',
+    '잘 쉬는 것도 일의 일부입니다. 오늘은 잠깐 창밖을 바라봐도 좋아요.',
+    '기록하는 사람은 잊지 않고, 나누는 사람은 더 크게 자랍니다.',
+    '처음은 누구나 서툴러요. 서툰 첫걸음이 모든 숙련의 시작입니다.',
+    '한 번에 다 하려 하지 말고, 오늘 할 수 있는 한 가지에 집중해 봐요.',
+    '반짝이는 아이디어는 편안한 대화 속에서 더 자주 태어납니다.',
+    '손에 익은 반복 위에 새로운 시도를 얹으면 그것이 실력이 됩니다.',
+    '정답을 찾기보다 더 나은 질문을 찾는 하루가 되길 바랍니다.',
+    '묵묵히 해낸 일들은 언젠가 반드시 누군가의 길이 되어 줍니다.',
+    '오늘의 작은 개선 하나가 내일 누군가의 시간을 아껴 줍니다.',
+    '마음이 급할수록 한 박자 쉬어 가세요. 길은 그대로 그 자리에 있어요.',
+    '다르게 생각해 보는 용기가 평범한 하루를 특별하게 만듭니다.',
+    '웃으며 건넨 인사 하나가 팀 모두의 하루를 가볍게 만듭니다.',
+    '결과가 보이지 않아도 성장은 조용히 뿌리를 내리고 있습니다.',
+    '배움에 늦은 때는 없어요. 궁금한 마음이 드는 지금이 가장 좋은 때입니다.',
+    '잘하고 싶은 마음이 있다는 것, 그것만으로도 이미 좋은 시작입니다.',
+    '도움을 청하는 것도 실력입니다. 함께 가면 더 멀리 갈 수 있어요.',
+    '오늘 나눈 노하우 하나가 내일 팀 모두의 든든한 무기가 됩니다.',
+    '바쁜 하루 속에서도 나를 위한 깊은 숨 한 번은 꼭 챙기세요.',
+    '매일 조금씩 그은 선들이 모여 결국 한 장의 그림이 됩니다.',
+    '흔들리는 날도 괜찮아요. 그만큼 더 깊이 뿌리를 내리는 중이니까요.',
+    '좋은 결과는 좋은 과정에서 나옵니다. 오늘의 과정을 아껴 주세요.',
+    '새로운 시도를 응원하는 문화가 우리 팀의 가장 큰 경쟁력입니다.',
+    '해 본 사람만 알 수 있는 것들이 있어요. 망설여진다면 일단 해 봐요.',
+    '쉼표가 있어야 문장이 아름답듯, 하루에도 쉼이 꼭 필요합니다.',
+    '생각을 꺼내 놓으면 함께 다듬을 수 있어요. 오늘도 편하게 나눠요.',
+    '익숙한 방식에 질문을 던지는 순간, 새로운 길이 열리기 시작합니다.',
+    '스스로에게 너그러운 사람이 다른 이에게도 따뜻할 수 있습니다.',
+    '천천히 가더라도 멈추지 않는다면 결국 원하는 곳에 닿게 됩니다.',
+    '오늘 당신의 작업이 누군가에게는 분명 큰 도움이 되었을 거예요.',
+    '좋은 팀은 서로의 빈칸을 자연스럽게 채워 주는 사람들입니다.'
+  ],
+  spring: [
+    '봄볕처럼 다정한 말 한마디가 누군가의 하루를 활짝 피워 냅니다.',
+    '새싹은 서두르지 않아요. 제때 피어나는 모든 것은 아름답습니다.',
+    '꽃이 피는 데 시간이 필요하듯, 성장에도 기다림이 필요해요.',
+    '따뜻한 바람이 부는 날, 새로운 일을 시작하기 딱 좋은 날입니다.',
+    '봄비가 땅을 적시듯, 꾸준한 노력은 조용히 마음을 키워 냅니다.',
+    '겨울을 견딘 가지에 꽃이 피듯, 버텨 낸 시간은 반드시 꽃이 됩니다.',
+    '꽃잎이 흩날리는 계절, 마음에도 산뜻한 바람 한 줄기 들여 보세요.',
+    '새 학기처럼 설레는 마음으로 오늘의 첫 페이지를 열어 보세요.',
+    '봄은 모두에게 공평하게 옵니다. 당신의 계절도 곧 피어날 거예요.',
+    '연둣빛 새잎처럼 오늘도 어제보다 한 뼘 더 자라는 하루 되세요.'
+  ],
+  summer: [
+    '뜨거운 햇살 아래 그늘을 나눠 주는 나무 같은 동료가 되어 봐요.',
+    '한여름 소나기처럼 시원한 아이디어가 쏟아지는 하루 되세요.',
+    '짙어 가는 초록처럼 우리의 경험도 날마다 깊어지고 있습니다.',
+    '더운 날일수록 물 한 잔, 쉼 한 번. 건강이 가장 큰 힘이에요.',
+    '파도는 쉬지 않고 밀려옵니다. 작은 꾸준함이 모여 바다가 됩니다.',
+    '여름밤 별처럼, 작은 성과들도 하나둘 모이면 환하게 빛납니다.',
+    '무성한 여름 숲처럼 서로 기대어 자랄 때 가장 푸르게 빛나요.',
+    '긴 낮만큼 여유도 길게, 오늘은 조금 느긋하게 숨 쉬어 보세요.',
+    '오래 기다린 매미가 크게 울듯, 준비한 시간은 결국 빛을 봅니다.',
+    '시원한 바람 한 줄기 같은 웃음이 사무실에 가득하길 바랍니다.'
+  ],
+  autumn: [
+    '잘 익은 열매는 뜨거운 여름을 견뎌 낸 시간이 주는 선물입니다.',
+    '단풍이 물들 듯, 우리의 노력도 천천히 고운 빛을 띠어 갑니다.',
+    '높아진 하늘만큼 마음에도 넉넉한 여유가 깃드는 하루 되세요.',
+    '가을은 거두는 계절이에요. 그동안의 수고를 스스로 칭찬해 주세요.',
+    '떨어지는 낙엽도 다음 봄을 위한 준비입니다. 쉼도 성장이에요.',
+    '선선한 바람처럼 가볍게, 오늘 할 일을 하나씩 정리해 보세요.',
+    '깊어 가는 가을처럼 생각도 차분히 익어 가는 하루가 되길 바라요.',
+    '노랗게 물든 은행잎처럼 오늘 하루가 환하게 기억되길 바랍니다.',
+    '한 해의 결실을 돌아보며 함께 걸어온 동료에게 고마움을 전해요.',
+    '책장 넘기기 좋은 계절, 새로운 배움 하나를 시작해 보면 어떨까요.'
+  ],
+  winter: [
+    '소복이 쌓인 눈처럼 조용한 노력도 어느새 큰 풍경이 됩니다.',
+    '추운 날일수록 따뜻한 말 한마디가 가장 큰 난로가 되어 줍니다.',
+    '겨울나무는 쉬는 것이 아니라 다가올 봄을 준비하고 있는 중입니다.',
+    '한 해를 잘 마무리하는 것도 새해를 잘 시작하는 방법입니다.',
+    '첫눈처럼 설레는 마음으로 새로운 계획을 그려 보는 하루 되세요.',
+    '차가운 바람 속에서도 서로의 온기로 함께 걸어가는 우리가 되어요.',
+    '하얀 눈 위에 첫 발자국을 남기듯, 오늘의 시도를 기록해 보세요.',
+    '긴 밤이 지나면 해는 반드시 뜹니다. 오늘도 정말 수고 많으셨어요.',
+    '따뜻한 차 한 잔처럼 서로에게 쉼이 되어 주는 동료가 되어요.',
+    '새해의 다짐은 거창하지 않아도 좋아요. 작은 약속부터 지켜 봐요.'
+  ]
+};
+const SEASONS = {
+  spring:{name:'봄', key:'sp', glow:[.80,.30,.30,.75], far:.56, near:.80, part:['petal','petal','petal2']},
+  summer:{name:'여름', key:'su', glow:[.86,.26,.10,.26], far:.55, near:.79, part:['leaf','leaf','leaf2'], night:['fly','fly','fly'], clouds:3},
+  autumn:{name:'가을', key:'au', glow:[.80,.28,.30,.80], far:.55, near:.80, part:['maple','maple2','ginkgo']},
+  winter:{name:'겨울', key:'wi', glow:[.84,.26,.12,.30], far:.50, near:.76, part:['snow','snow','snow2'], clouds:2}
+};
+const seasonOf = d => { const m = d.getMonth() + 1; return m>=3 && m<=5 ? 'spring' : m>=6 && m<=8 ? 'summer' : m>=9 && m<=11 ? 'autumn' : 'winter'; };
+const dayNo = d => Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 864e5);
+const gcd = (a,b) => b ? gcd(b, a % b) : a;
+function quoteOf(d){
+  const pool = [...QUOTES[seasonOf(d)], ...QUOTES.common];
+  const step = [7,11,13,17,19].find(k => gcd(k, pool.length)===1) || 1;  // 계절 글귀와 공통 글귀가 섞여 나오도록 건너뛰며 고른다
+  return pool[(dayNo(d) * step) % pool.length];
+}
+const seeded = a => () => { a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+const SS = {node:null, key:'', w:0, t0:0, timer:0};
+function seasonNode(){
+  const d = new Date(), s = seasonOf(d), cfg = SEASONS[s];
+  const key = `${dayNo(d)}|${effTheme()}`;
+  if (!SS.node || SS.key !== key) {
+    const n = document.createElement('section');
+    n.className = `ss s-${s}`;
+    n.setAttribute('aria-label', `${cfg.name} · 오늘의 글귀`);
+    n.innerHTML = `<div class="ss-art" aria-hidden="true"></div><div class="ss-paper" aria-hidden="true"></div>
+      <figure class="ss-txt"><figcaption><span class="ss-dot"></span>${cfg.name} · ${d.getMonth()+1}월 ${d.getDate()}일의 글귀</figcaption><blockquote>${esc(quoteOf(d))}</blockquote></figure>`;
+    SS.node = n; SS.key = key; SS.w = 0;
+  }
+  return SS.node;
+}
+function mountSeason(slot){
+  if (!slot) return;
+  const n = seasonNode();
+  if (!SS.t0) SS.t0 = performance.now();
+  n.style.setProperty('--t', ((performance.now() - SS.t0) / 1000).toFixed(2) + 's');
+  slot.replaceWith(n);
+  const w = n.clientWidth;
+  if (w && Math.abs(w - SS.w) > 40) { clearTimeout(SS.timer); SS.timer = setTimeout(() => paintSeason(n), 30); }
+}
+function refreshSeason(){ // 테마가 바뀌면 색을 다시 칠한다
+  if (!SS.node) return;
+  const was = SS.node.isConnected ? SS.node : null;
+  SS.node = null;
+  if (was) { const slot = document.createElement('div'); was.replaceWith(slot); mountSeason(slot); }
+}
+function paintSeason(n){
+  if (!n.isConnected) return;
+  const W = n.clientWidth, H = n.clientHeight; if (!W || !H) return;
+  SS.w = W;
+  const s = [...n.classList].find(c => c.startsWith('s-')).slice(2), cfg = SEASONS[s], dark = effTheme()==='dark';
+  const css = getComputedStyle(document.documentElement);
+  const col = k => css.getPropertyValue(`--${cfg.key}-${k}`).trim() || '#999';
+  const rnd = seeded(dayNo(new Date()) * 31 + s.length);
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const gauss = () => { let u = 0, v = 0; while (!u) u = rnd(); while (!v) v = rnd(); return Math.sqrt(-2*Math.log(u)) * Math.cos(2*Math.PI*v); };
+  const deform = (pts, times) => {
+    for (let k = 0; k < times; k++) {
+      const out = [];
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i], b = pts[(i+1) % pts.length], len = Math.hypot(b.x-a.x, b.y-a.y), v = (a.v + b.v) / 2;
+        out.push(a, {x:(a.x+b.x)/2 + gauss()*len*.28*v, y:(a.y+b.y)/2 + gauss()*len*.28*v, v: v*(.75 + rnd()*.4)});
+      }
+      pts = out;
+    }
+    return pts;
+  };
+  // 수채화: 모양을 조금씩 흐트러뜨린 반투명 층을 수십 번 겹쳐 번짐과 가장자리 농담을 만든다
+  const wash = (ctx, base, color, layers=26, alpha=.05) => {
+    const shape = deform(base, 3);
+    ctx.fillStyle = color; ctx.globalAlpha = alpha;
+    for (let l = 0; l < layers; l++) {
+      const p = deform(shape, 2);
+      ctx.beginPath(); p.forEach((q,i) => i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)); ctx.closePath(); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  };
+  const blob = (cx, cy, rx, ry, v=1, k=10) => Array.from({length:k}, (_, i) => { const a = i / k * Math.PI * 2; return {x: cx + Math.cos(a)*rx*(.85 + rnd()*.3), y: cy + Math.sin(a)*ry*(.85 + rnd()*.3), v}; });
+  const ridge = (w, h, y0, amp, ph) => {
+    const pts = [];
+    for (let i = 0; i <= 18; i++) { const x = -.06*w + i * w*1.12/18; pts.push({x, y: h*(y0 + amp*(Math.sin(i*.7 + ph)*.65 + Math.sin(i*1.9 + ph*2)*.35)), v: .42}); }
+    pts.push({x: w*1.08, y: h*1.4, v:.08}, {x: -w*.08, y: h*1.4, v:.08});
+    return pts;
+  };
+  const layer = (cls, w, h, draw) => {
+    const c = document.createElement('canvas'); c.className = cls; c.width = Math.round(w*dpr); c.height = Math.round(h*dpr);
+    const ctx = c.getContext('2d'); ctx.scale(dpr, dpr); draw(ctx, w, h); return c;
+  };
+  const OV = 28; // 좌우로 천천히 흔들리는 층은 가장자리가 비지 않게 넓게 그린다
+  const art = document.createDocumentFragment();
+  // 1) 하늘 번짐 + 해/달/노을빛
+  art.appendChild(layer('ss-l ss-sky', W, H, (c, w, h) => {
+    wash(c, blob(w*.20, h*.10, w*.26, h*.42, .9), col('sky2'), 16, .035);
+    wash(c, blob(w*.66, h*.14, w*.22, h*.34, .9), col('acc2'), 16, dark ? .03 : .028);
+  }));
+  const [gx, gy, gr, ga] = cfg.glow;
+  art.appendChild(layer('ss-l ss-glow', W, H, (c, w, h) => {
+    const night = dark && (s==='summer' || s==='winter');
+    const gc = col(s==='autumn' ? 'acc2' : 'acc');
+    wash(c, blob(w*gx, h*gy, Math.min(w*gr*.6, h*1.1), h*(night ? .3 : ga*.45), .9, 16), gc, 18, night ? .035 : .03);
+    if (s==='summer' || s==='winter') { wash(c, blob(w*gx, h*gy, h*.2, h*.2, .5, 16), gc, 12, night ? .04 : .035); wash(c, blob(w*gx, h*gy, h*.12, h*.12, .18, 18), gc, 16, night ? .12 : .09); }
+  }));
+  // 2) 구름 (여름·겨울)
+  for (let i = 0; i < (cfg.clouds || 0); i++) {
+    const cw = Math.min(260, W*.34), ch = cw*.34;
+    const cl = layer('ss-cloud', cw, ch, (c, w, h) => { for (let k = 0; k < 3; k++) wash(c, blob(w*(.3 + k*.2), h*(.55 - (k===1)*.12), w*.22, h*.32, .8), col('cloud'), 14, dark ? .05 : .09); });
+    const fd = 95 + rnd()*60;
+    cl.style.cssText = `width:${cw.toFixed(0)}px;height:${ch.toFixed(0)}px;top:${(4 + rnd()*22).toFixed(1)}%;--x:${(.3 + rnd()*.6).toFixed(2)};--fd:${fd.toFixed(0)}s;--d:${(-rnd()*fd).toFixed(1)}s`;
+    art.appendChild(cl);
+  }
+  // 3) 먼 산 · 가까운 언덕 + 계절 풍경
+  art.appendChild(layer('ss-l ss-far', W + OV*2, H, (c, w, h) => {
+    wash(c, ridge(w, h, cfg.far, .09, rnd()*6), col('far'), 22, .032);
+    wash(c, ridge(w, h, cfg.far + .1, .06, rnd()*6), col('far'), 18, .03);
+    if (s==='winter') for (let i = 0; i < 10; i++) { const x = w*(.44 + i*.055 + rnd()*.02), y = h*(cfg.near + .02 + rnd()*.05), t = h*(.15 + rnd()*.12);
+      for (const [k, f] of [[0, 1], [1, .7]]) wash(c, [{x, y: y - t*(1 - k*.12), v:.15}, {x: x + t*.2*f, y: y - t*k*.38, v:.3}, {x: x - t*.2*f, y: y - t*k*.38, v:.3}], col('tree'), 10, .07); }
+  }));
+  art.appendChild(layer('ss-l ss-near', W + OV*2, H, (c, w, h) => {
+    wash(c, ridge(w, h, cfg.near, .05, rnd()*6), col('near'), 24, .045);
+    const trees = s==='winter' ? 0 : 6;
+    for (let i = 0; i < trees; i++) {
+      const x = w*(.50 + i*.085 + rnd()*.03), y = h*(cfg.near - .07 + rnd()*.04), r = h*(.07 + rnd()*.05);
+      const color = s==='autumn' ? col(i % 3 ? 'acc' : 'acc2') : s==='spring' ? col(i % 2 ? 'acc' : 'acc2') : col('tree');
+      wash(c, blob(x, y, r*1.15, r, .55), color, 16, .055);
+    }
+  }));
+  // 4) 떨어지는(여름 밤엔 떠오르는) 입자
+  const kinds = dark && cfg.night ? cfg.night : cfg.part;
+  const sprites = kinds.map(k => sprite(k, rnd, col, dpr, gauss, wash, blob));
+  const cnt = Math.max(7, Math.min(18, Math.round(W / 75)));
+  for (let i = 0; i < cnt; i++) {
+    const k = Math.floor(rnd() * sprites.length), src = sprites[k], p = document.createElement('i');
+    p.className = 'ss-p' + (kinds[k]==='fly' ? ' fly' : kinds[k].startsWith('snow') ? ' snow' : '');
+    const sc = (.55 + rnd()*.6).toFixed(2), fd = (kinds[k]==='fly' ? 14 : kinds[k].startsWith('snow') ? 16 : 11) + rnd()*9;
+    p.style.cssText = `left:${(rnd()*100).toFixed(1)}%;--s:${sc};--fd:${fd.toFixed(1)}s;--sd:${(3 + rnd()*3).toFixed(1)}s;--d:${(-rnd()*fd).toFixed(1)}s;--dx:${(-40 + rnd()*80).toFixed(0)}px;--y:${rnd().toFixed(2)}`;
+    const c = document.createElement('canvas'); c.width = src.width; c.height = src.height; c.getContext('2d').drawImage(src, 0, 0);
+    p.appendChild(c); art.appendChild(p);
+  }
+  const box = n.querySelector('.ss-art');
+  box.classList.remove('ready'); box.replaceChildren(art);
+  n.querySelector('.ss-paper').style.backgroundImage = `url(${paperTile()})`;
+  n.style.setProperty('--bw', W + 'px'); n.style.setProperty('--bh', H + 'px');
+  requestAnimationFrame(() => box.classList.add('ready'));
+}
+function sprite(kind, rnd, col, dpr, gauss, wash, blob){
+  const S = 40, c = document.createElement('canvas'); c.width = c.height = Math.round(S*dpr);
+  const x = c.getContext('2d'); x.scale(dpr, dpr);
+  const polar = (f, k=40, v=.12) => Array.from({length:k}, (_, i) => { const a = i / k * Math.PI * 2, r = f(a); return {x: S/2 + Math.cos(a)*r, y: S/2 + Math.sin(a)*r, v}; });
+  if (kind.startsWith('petal')) wash(x, polar(a => 13 * (.62 + .38*Math.abs(Math.cos(a))) * (1 - .25*Math.max(0, Math.cos(a))**8), 32, .1).map(p => ({...p, x: S/2 + (p.x - S/2)*.72})), col(kind==='petal2' ? 'acc2' : 'part'), 12, .16);
+  else if (kind.startsWith('maple')) wash(x, polar(a => 15 * (.5 + .5*Math.abs(Math.cos(a*2.5))) * (a > 1.25 && a < 1.9 ? .55 : 1), 50, .06), col(kind==='maple2' ? 'acc' : 'part'), 12, .17);
+  else if (kind==='ginkgo') wash(x, polar(a => { const t = ((a + Math.PI/2) % (Math.PI*2)) - Math.PI; return Math.abs(t) < 1.1 ? 15 * (1 - .18*Math.abs(Math.sin(t*6))) * (Math.abs(t) < .08 ? .7 : 1) : 4; }, 48, .06), col('acc2'), 12, .17);
+  else if (kind.startsWith('leaf')) wash(x, polar(a => 15 * Math.abs(Math.sin(a))**.9 * (.35 + .65*Math.abs(Math.sin(a))) + 3, 36, .08).map(p => ({...p, y: S/2 + (p.y - S/2)*.45})), col(kind==='leaf2' ? 'acc2' : 'part'), 12, .16);
+  else if (kind.startsWith('snow')) { const r = kind==='snow2' ? 7 : 5; wash(x, blob(S/2, S/2, r+2, r+2, .3, 12), col('far'), 8, .08); wash(x, blob(S/2, S/2, r, r, .3, 12), col('part'), 10, .24); }
+  else { const g = x.createRadialGradient(S/2, S/2, 0, S/2, S/2, S/2); g.addColorStop(0, col('part')); g.addColorStop(.18, col('part')); g.addColorStop(1, 'transparent'); x.fillStyle = g; x.fillRect(0, 0, S, S); }
+  return c;
+}
+let paperUrl = '';
+function paperTile(){ // 수채화 종이 결 (한 번만 만든다)
+  if (paperUrl) return paperUrl;
+  const N = 140, c = document.createElement('canvas'); c.width = c.height = N;
+  const x = c.getContext('2d'), img = x.createImageData(N, N), r = seeded(7);
+  for (let i = 0; i < N*N; i++) { const v = 128 + (r() - .5) * 60 + (r() < .02 ? -40 : 0); img.data[i*4] = img.data[i*4+1] = img.data[i*4+2] = v; img.data[i*4+3] = 255; }
+  x.putImageData(img, 0, 0);
+  try { paperUrl = c.toDataURL('image/png'); } catch { paperUrl = ''; }
+  return paperUrl;
+}
 
 /* ---------- HOME (dashboard) ---------- */
 const ICONS = {
@@ -350,7 +627,7 @@ function vHome(){
       <span class="axcard-top"><span>${PARTS[p.part]} · ${P_CAT[p.category]?.l || ''}</span><span class="st">${P_STATUS[p.status]?.l || ''}</span></span>
       <b class="axcard-title">${esc(p.title)}</b>
       <span class="axcard-sum">${esc(p.summary || '')}</span>
-      <span class="axcard-foot">${who(p.createdBy)}<span class="num">${fmtTs(p.updatedAt)}</span></span>
+      <span class="axcard-foot">${who(p.createdBy)}<span class="row" style="gap:6px">${cmtBadge(p.id)}<span class="num">${fmtTs(p.updatedAt)}</span></span></span>
       <span class="axcard-tools">${toolChips(p.tools, 3)}</span></button>`).join('')
     : `<div class="axcard empty-card"><b>아직 올라온 AX 실적이 없어요</b><span class="muted">디자인·퍼블리싱에서 AI를 활용한 사례, 노하우, 산출물을 자유롭게 올려주세요.</span>${canW() ? '<button class="btn pri sm" data-act="post-new">첫 AX 실적 올리기</button>' : ''}</div>`;
 
@@ -365,6 +642,8 @@ function vHome(){
   return `
   <div class="dash-head"><div><p class="muted" style="margin:0 0 2px">${now.getFullYear()}년 ${now.getMonth()+1}월 ${now.getDate()}일 ${DOW[now.getDay()]}요일</p><h1>안녕하세요, ${esc(hello)}님</h1></div>
     <div class="row">${canW() ? `<button class="btn" data-act="vac-new">휴가 등록</button><button class="btn" data-act="ax-new">AI 이미지 제출</button><button class="btn pri" data-act="post-new">+ AX 실적 올리기</button>` : ''}</div></div>
+
+  <div id="season-slot" class="ss-slot"></div>
 
   <div class="ptiles">${tiles}</div>
 
@@ -477,7 +756,7 @@ function postCard(p){
   return `<button class="pcard" data-act="post-view" data-id="${esc(p.id)}">
     <span class="pcard-t">${tint(PARTS[p.part], PART_HUE[p.part])}<b>${esc(p.title)}</b></span>
     <span class="pcard-s">${esc(p.summary || '')}</span>
-    <span class="pcard-f">${who(p.createdBy)}${toolChips(p.tools, 4)}</span></button>`;
+    <span class="pcard-f">${who(p.createdBy)}${cmtBadge(p.id)}${toolChips(p.tools, 4)}</span></button>`;
 }
 function vAxBoard(){
   const posts = S.posts;
@@ -509,7 +788,7 @@ function vAxBoard(){
     </div>
     <div class="tbl-wrap"><table class="ptable"><thead><tr><th>제목</th><th>요약</th><th>첨부파일</th><th>작성자</th><th>상태</th><th>AI Tool</th><th>중요도</th><th>분류</th><th>일정</th><th>최근 업데이트</th></tr></thead><tbody id="post-list">
       ${list.length ? list.map(p => `<tr class="click" data-act="post-view" data-id="${esc(p.id)}">
-        <td class="pt-title"><span class="t-title">${p.part!=='common' ? '' : ''}${esc(p.title)}</span><span class="t-sub">${PARTS[p.part]}${p.companyId ? ' · ' + esc(coName(p.companyId)) : ''}</span></td>
+        <td class="pt-title"><span class="t-title">${p.part!=='common' ? '' : ''}${esc(p.title)}</span><span class="t-sub">${PARTS[p.part]}${p.companyId ? ' · ' + esc(coName(p.companyId)) : ''}${cmtCount(p.id) ? ` · 댓글 ${cmtCount(p.id)}` : ''}</span></td>
         <td class="pt-sum">${esc(p.summary || '')}</td>
         <td class="pt-file">${(p.attachments||[]).length ? esc(p.attachments[0].name) + (p.attachments.length > 1 ? ` 외 ${p.attachments.length-1}` : '') : '<span class="muted">—</span>'}</td>
         <td>${who(p.createdBy)}</td>
@@ -536,10 +815,59 @@ function postView(id){
     </dl>
     ${p.body ? `<div class="f"><span class="lab">내용</span><div class="body-text">${linkify(p.body)}</div></div>` : ''}
     <div class="f"><span class="lab">첨부파일 ${(p.attachments||[]).length}개</span>${attachView(p.attachments)}</div>
+    <section class="cmts" id="cmts" data-post="${esc(p.id)}" aria-label="댓글"></section>
   </div>
   <div class="mf">${canEditPost(p) ? `<span class="left" id="del-zone"><button class="btn danger" data-act="ask-del">삭제</button></span><button class="btn" data-act="post-edit" data-id="${esc(p.id)}">수정</button>` : ''}<button class="btn ink" data-act="close">닫기</button></div>`, true);
   delTarget = {kind:'post', id};
+  syncComments();
 }
+/* comments (AX 실적 글) */
+const canCmtEdit = c => canW() && c.createdBy===S.me?.id;          // 수정은 본인만
+const canCmtDel = c => S.isAdmin || canCmtEdit(c);                  // 삭제는 본인 또는 관리자
+function cmtItem(c, editing){
+  const mine = c.createdBy===S.me?.id, edited = ts(c.updatedAt) - ts(c.createdAt) > 60e3;
+  return `<li class="cmt ${mine ? 'mine' : ''}" data-cid="${esc(c.id)}">${userAv(c.createdBy, 28)}<div class="cb">
+    <div class="cm"><b>${esc(nameOf(c.createdBy))}</b><span class="num">${fmtWhen(c.createdAt)}${edited ? ' · 수정됨' : ''}</span>
+      ${!editing && (canCmtEdit(c) || canCmtDel(c)) ? `<span class="ca">${canCmtEdit(c) ? `<button class="icon-btn" data-act="cmt-edit" data-id="${esc(c.id)}">수정</button>` : ''}${canCmtDel(c) ? `<button class="icon-btn" data-act="cmt-del" data-id="${esc(c.id)}">삭제</button>` : ''}</span>` : ''}</div>
+    ${editing ? `<div class="cmt-edit"><textarea id="cmt-edit-box" rows="3" maxlength="2000" aria-label="댓글 수정">${esc(c.body)}</textarea><div class="row" style="justify-content:flex-end"><button class="btn sm" data-act="cmt-cancel">취소</button><button class="btn sm pri" data-act="cmt-save" data-id="${esc(c.id)}">저장</button></div></div>`
+      : `<div class="ct">${linkify(c.body)}</div>`}</div></li>`;
+}
+let cmtEditing = null;
+function syncComments(){
+  const box = $('#cmts'); if (!box) return;
+  const postId = box.dataset.post, list = cmtsOf(postId);
+  const draft = $('#cmt-body')?.value, prevEdit = box.querySelector('#cmt-edit-box')?.closest('.cmt')?.dataset.cid, editDraft = $('#cmt-edit-box')?.value;
+  if (cmtEditing && !list.some(c => c.id===cmtEditing)) cmtEditing = null;
+  if (S.commentsOff) { box.innerHTML = `<div class="cmts-h">댓글</div><div class="muted" style="font-size:12.5px">${S.isAdmin ? '댓글을 쓰려면 DB 업그레이드(upgrade-007)를 먼저 실행해 주세요.' : '댓글 기능을 준비하고 있어요.'}</div>`; return; }
+  box.innerHTML = `<div class="cmts-h">댓글 <span class="num">${list.length}</span></div>
+    ${list.length ? `<ul class="cmt-list">${list.map(c => cmtItem(c, c.id===cmtEditing)).join('')}</ul>`
+      : `<div class="muted" style="font-size:12.5px">${loading('ax_comments') ? '불러오는 중…' : canW() ? '첫 댓글을 남겨 보세요. 질문이나 응원도 좋아요.' : '아직 댓글이 없어요.'}</div>`}
+    ${canW() ? `<div class="cmt-form">${userAv(S.me.id, 28)}<textarea id="cmt-body" rows="2" maxlength="2000" placeholder="댓글을 남겨 주세요 (Ctrl+Enter로 등록)" aria-label="댓글 입력" data-nofocus></textarea><button class="btn pri" data-act="cmt-add">등록</button></div><div class="err" id="cmt-err"></div>` : ''}`;
+  if (draft) $('#cmt-body').value = draft;
+  const ed = $('#cmt-edit-box'); if (ed && prevEdit===cmtEditing && editDraft != null) ed.value = editDraft;  // 실시간 갱신 중에도 쓰던 내용 유지
+  hydrate(box);
+}
+async function addComment(btn){
+  const t = $('#cmt-body'), body = (t?.value || '').trim(), postId = $('#cmts')?.dataset.post;
+  if (!body) { $('#cmt-err').textContent = '댓글 내용을 입력해주세요.'; t?.focus(); return; }
+  btn.disabled = true;
+  const ok = await run(sb.from('ax_comments').insert({post_id: postId, body}).select('id'), true);
+  btn.disabled = false;
+  if (ok) { t.value = ''; $('#cmt-err').textContent = ''; await load('ax_comments'); const l = $('#cmts .cmt-list'); l?.lastElementChild?.scrollIntoView({block:'nearest'}); }
+}
+async function saveComment(id, btn){
+  const body = ($('#cmt-edit-box')?.value || '').trim();
+  if (!body) { $('#cmt-edit-box').focus(); return; }
+  btn.disabled = true;
+  const ok = await run(sb.from('ax_comments').update({body}).eq('id', id).select('id'), true);
+  btn.disabled = false;
+  if (ok) { cmtEditing = null; await load('ax_comments'); toast('댓글을 수정했습니다.'); }
+}
+async function delComment(id){
+  const ok = await run(sb.from('ax_comments').delete().eq('id', id).select('id'), true);
+  if (ok) { if (cmtEditing===id) cmtEditing = null; await load('ax_comments'); toast('댓글을 삭제했습니다.'); }
+}
+
 function tgGroup(name, options, selected, multi){
   return `<div class="tg" data-group="${name}" ${multi ? 'data-multi="1"' : ''} role="group">${options.map(([v,l,h]) => `<button type="button" class="chip tint h-${h} tgb" data-act="tg" data-v="${esc(v)}" aria-pressed="${(multi ? selected.includes(v) : selected===v) ? 'true' : 'false'}">${esc(l)}</button>`).join('')}</div>`;
 }
@@ -744,13 +1072,13 @@ function openModal(html, wide){
   m.innerHTML = `<div class="ov" data-ov><div class="modal ${wide?'wide':''}" role="dialog" aria-modal="true">${html}</div></div>`;
   m.hidden = false;
   hydrate(m); bindDrop();
-  const f = m.querySelector('input:not([type=file]):not([readonly]),select,textarea'); (f || m.querySelector('button'))?.focus();
+  const f = m.querySelector('input:not([type=file]):not([readonly]):not([data-nofocus]),select:not([data-nofocus]),textarea:not([data-nofocus])'); (f || m.querySelector('button'))?.focus();
 }
 function closeModal(){
   if (upl && !upl.saved && upl.fresh.size) removeFiles([...upl.fresh]);
   if (memPhoto && !memPhoto.saved && memPhoto.fresh.size) removeFiles([...memPhoto.fresh]);
   memPhoto = null;
-  const m = $('#modal'); m.hidden = true; m.innerHTML = ''; upl = null; delTarget = null;
+  const m = $('#modal'); m.hidden = true; m.innerHTML = ''; upl = null; delTarget = null; cmtEditing = null;
 }
 const mhead = (t, sub) => `<div class="mh"><div><h3>${t}</h3>${sub?`<p>${sub}</p>`:''}</div><button class="icon-btn" data-act="close" aria-label="닫기">✕</button></div>`;
 
@@ -1103,7 +1431,7 @@ async function doDelete(){
   if (t.kind==='notice') { const n = S.notices.find(x => x.id===t.id); ok = await run(sb.from('notices').delete().eq('id', t.id).select('id'), true); if (ok) { removeFiles((n?.attachments||[]).map(f => f.path)); reload('notices'); } }
   if (t.kind==='vacation') { ok = await run(sb.from('vacations').delete().eq('id', t.id).select('id'), true); if (ok) reload('vacations'); }
   if (t.kind==='member') { const m = memberById(t.id); ok = await run(sb.from('members').delete().eq('id', t.id).select('id'), true); if (ok) { if (m?.photoPath) removeFiles([m.photoPath]); if (memPhoto) memPhoto.saved = true; reload('members'); reload('vacations'); } }
-  if (t.kind==='post') { const p = S.posts.find(x => x.id===t.id); ok = await run(sb.from('ax_posts').delete().eq('id', t.id).select('id'), true); if (ok) { removeFiles((p?.attachments||[]).map(f => f.path)); reload('ax_posts'); } }
+  if (t.kind==='post') { const p = S.posts.find(x => x.id===t.id); ok = await run(sb.from('ax_posts').delete().eq('id', t.id).select('id'), true); if (ok) { removeFiles((p?.attachments||[]).map(f => f.path)); reload('ax_posts'); reload('ax_comments'); } }
   if (t.kind==='company') { ok = await run(sb.from('companies').delete().eq('id', t.id).select('id'), true); if (ok) reload('companies'); }
   if (t.kind==='ax') { const a = S.ax.find(x => x.id===t.id); ok = await run(sb.from('ax_reports').delete().eq('id', t.id).select('id'), true); if (ok) { removeFiles((a?.attachments||[]).map(f => f.path)); reload('ax_reports'); reload('ax_reviews'); } }
   if (t.kind==='user') { ok = await run(sb.from('allowed_emails').delete().eq('email', t.id).select('email'), true); if (ok) { load('allowed_emails'); reload('profiles'); } }
@@ -1135,6 +1463,13 @@ document.addEventListener('click', e => {
       if (g.dataset.group==='status') { const u = $('#p-usable'); if (u) { u.disabled = el.dataset.v!=='done'; if (u.disabled) u.checked = false; } }
       break; }
     case 'tool-add': addTool(); break;
+    case 'cmt-add': if (canW()) addComment(el); break;
+    case 'cmt-edit': cmtEditing = id; syncComments(); $('#cmt-edit-box')?.focus(); break;
+    case 'cmt-cancel': cmtEditing = null; syncComments(); break;
+    case 'cmt-save': saveComment(id, el); break;
+    case 'cmt-del': el.closest('.ca').innerHTML = `<span class="confirm">삭제할까요? <button class="btn sm danger" data-act="cmt-del-yes" data-id="${esc(id)}">삭제</button><button class="btn sm" data-act="cmt-del-no">취소</button></span>`; break;
+    case 'cmt-del-no': syncComments(); break;
+    case 'cmt-del-yes': delComment(id); break;
     case 'notice-new': noticeForm(); break;
     case 'notice-edit': noticeForm(id); break;
     case 'ncat': S.noticeCat = k; render(); break;
@@ -1189,6 +1524,8 @@ document.addEventListener('change', e => {
 document.addEventListener('keydown', e => {
   if (e.key==='Escape') { if (!$('#lb').hidden) { $('#lb').hidden = true; return; } if (!$('#modal').hidden) closeModal(); }
   if (e.key==='Enter' && e.target.id==='p-tool-add') { e.preventDefault(); addTool(); return; }
+  if (e.key==='Enter' && (e.ctrlKey || e.metaKey) && e.target.id==='cmt-body') { e.preventDefault(); $('[data-act="cmt-add"]')?.click(); return; }
+  if (e.key==='Enter' && (e.ctrlKey || e.metaKey) && e.target.id==='cmt-edit-box') { e.preventDefault(); $('[data-act="cmt-save"]')?.click(); return; }
   if (e.key==='Enter' && e.target.matches('#modal input[type=text],#modal input[type=number]')) { e.preventDefault(); $('#modal [data-submit]')?.click(); }
 });
 document.addEventListener('submit', e => e.preventDefault());
@@ -1244,7 +1581,10 @@ async function savePassword(){
 function onHash(){ const h = location.hash.slice(1); S.route = ROUTES.includes(h) ? h : 'home'; closeModal(); render(); window.scrollTo(0,0); }
 window.addEventListener('hashchange', onHash);
 let rsT; let lastW = window.innerWidth;
-window.addEventListener('resize', () => { clearTimeout(rsT); rsT = setTimeout(() => { if (S.route==='ax' && Math.abs(window.innerWidth - lastW) > 40) { lastW = window.innerWidth; render(); } }, 200); });
+window.addEventListener('resize', () => { clearTimeout(rsT); rsT = setTimeout(() => {
+  if (S.route==='ax' && Math.abs(window.innerWidth - lastW) > 40) { lastW = window.innerWidth; render(); }
+  if (S.route==='home' && SS.node?.isConnected && Math.abs(SS.node.clientWidth - SS.w) > 40) paintSeason(SS.node);
+}, 200); });
 
 /* ---------- theme toggle ---------- */
 const mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
@@ -1262,9 +1602,9 @@ function syncTheme(){
 document.addEventListener('click', e => {
   if (!e.target.closest('[data-theme-toggle]')) return;
   const next = effTheme()==='dark' ? 'light' : 'dark';
-  rootEl.setAttribute('data-theme', next); lsSet('hub.theme', next); syncTheme();
+  rootEl.setAttribute('data-theme', next); lsSet('hub.theme', next); syncTheme(); refreshSeason();
 });
-if (mq && mq.addEventListener) mq.addEventListener('change', syncTheme);
+if (mq && mq.addEventListener) mq.addEventListener('change', () => { syncTheme(); if (!rootEl.getAttribute('data-theme')) refreshSeason(); });
 
 /* ---------- gate: setup / login / pending ---------- */
 const themeBtn = `<button type="button" class="theme-tg" data-theme-toggle role="switch" aria-checked="false" aria-label="다크 모드로 전환"><span class="knob"></span><span class="ic sun" aria-hidden="true">☀️</span><span class="ic moon" aria-hidden="true">🌙</span></button>`;

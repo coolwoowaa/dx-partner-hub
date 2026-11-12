@@ -22,7 +22,7 @@ const SHOTS = [
     const ctx = await b.newContext({ viewport: { width: 1440, height: 1178 }, deviceScaleFactor: 2, colorScheme: theme });
     await ctx.addInitScript(t => { try { localStorage.setItem('hub.theme', t); } catch (e) {} }, theme);
     const p = await ctx.newPage(); await routeHub(p);
-    await p.goto(`${HOST}/?role=admin&name=${name}#${route}`); await p.waitForTimeout(700);
+    await p.goto(`${HOST}/?role=admin&name=${name}#${route}`); await p.waitForTimeout(1800); // 홈 계절 배너가 번져 나타날 때까지
     if (prep) { await prep(p); await p.waitForTimeout(200); }
     await p.mouse.move(2, 1176); await p.waitForTimeout(100); // 호버 흔적 제거
     await p.screenshot({ path: path.join(out, file) });

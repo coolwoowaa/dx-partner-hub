@@ -35,6 +35,30 @@ const shotsDir = (() => { const i = process.argv.indexOf('--shots'); return i > 
           if (!/관리자만 볼 수 있는 메뉴/.test(t)) fail(`${acc.label}/${vp.tag}`, '#users 가 관리자 외 계정에 열림');
         } else if (!(await p.$('#view h1, #view .dash-head'))) fail(`${acc.label}/${vp.tag}`, `#${r} 제목이 렌더되지 않음`);
       }
+      // 홈 계절 배너: 글귀 30~50자, 수채화 캔버스, 다시 그려도 같은 배너 유지(애니메이션이 끊기지 않게)
+      await p.evaluate(() => location.hash = 'home'); await p.waitForTimeout(900);
+      const ss = await p.evaluate(() => { const n = document.querySelector('.ss'); window.__ss = n;
+        return n && { q: [...(n.querySelector('blockquote')?.textContent || '')].length, cv: n.querySelectorAll('.ss-art canvas').length }; });
+      if (!ss) fail(`${acc.label}/${vp.tag}`, '홈 계절 배너가 없음');
+      else { if (ss.q < 30 || ss.q > 50) fail(`${acc.label}/${vp.tag}`, `오늘의 글귀 길이 ${ss.q}자 (30~50자여야 함)`); if (!ss.cv) fail(`${acc.label}/${vp.tag}`, '수채화 캔버스가 그려지지 않음'); }
+      await p.click('.wkday:nth-child(3)'); await p.waitForTimeout(150);
+      if (!(await p.evaluate(() => window.__ss && window.__ss === document.querySelector('.ss')))) fail(`${acc.label}/${vp.tag}`, '홈을 다시 그릴 때 계절 배너가 새로 만들어짐');
+      // AX 실적 댓글: 열람 전용은 입력창 없음, 작성 권한이 있으면 등록되고 목록에 보임
+      await p.evaluate(() => location.hash = 'ax'); await p.waitForTimeout(150);
+      await p.click('#post-list tr[data-id="p1"]'); await p.waitForTimeout(150);
+      const cm = await p.evaluate(() => ({ n: document.querySelectorAll('#cmts .cmt').length, form: !!document.querySelector('#cmt-body'), focus: document.activeElement?.id }));
+      if (cm.n !== 2) fail(`${acc.label}/${vp.tag}`, `댓글 ${cm.n}개 보임 (데모 데이터 2개)`);
+      if (cm.form !== (acc.label !== '열람 전용')) fail(`${acc.label}/${vp.tag}`, `댓글 입력창 표시가 권한과 다름 (${cm.form})`);
+      if (cm.focus === 'cmt-body') fail(`${acc.label}/${vp.tag}`, '글을 열자마자 댓글 입력창으로 이동함');
+      if (cm.form) {
+        await p.fill('#cmt-body', '시험 댓글입니다'); await p.keyboard.press('Control+Enter'); await p.waitForTimeout(400);
+        const after = await p.evaluate(() => [...document.querySelectorAll('#cmts .ct')].map(x => x.textContent));
+        if (!after.includes('시험 댓글입니다')) fail(`${acc.label}/${vp.tag}`, '댓글 등록이 목록에 반영되지 않음');
+        const sw2 = await p.evaluate(() => document.documentElement.scrollWidth);
+        if (sw2 > vp.w + 1) fail(`${acc.label}/${vp.tag}`, `댓글 창에서 가로 스크롤 생김 (폭 ${sw2}px)`);
+        await p.evaluate(() => { window.__DB.ax_comments = window.__DB.ax_comments.filter(c => c.body !== '시험 댓글입니다'); });
+      }
+      await p.keyboard.press('Escape'); await p.waitForTimeout(80);
       if (vp.tag === 'PC') {
         const opened = [];
         for (const act of FORMS) {
@@ -94,5 +118,5 @@ const shotsDir = (() => { const i = process.argv.indexOf('--shots'); return i > 
   await b.close();
   notes.forEach(n => console.log('· ' + n));
   if (problems.length) { console.log(`\n결과: 문제 ${problems.length}건`); problems.forEach(x => console.log(' - ' + x)); process.exit(1); }
-  console.log('\n결과: 통과 (계정 4종 × 화면 8개 × PC·모바일, 폼 열기, 승인 대기·로그인·비밀번호 만들기)');
+  console.log('\n결과: 통과 (계정 4종 × 화면 8개 × PC·모바일, 계절 배너, 댓글, 폼 열기, 승인 대기·로그인·비밀번호 만들기)');
 })();

@@ -50,6 +50,7 @@ select pg_temp.expect('가입: 미등록은 pending', $q$select 1 from public.pr
 
 insert into public.members (id, name, company_id, part) values ('11111111-1111-1111-1111-111111111111', '시험 디자이너', 'corp', 'design') on conflict do nothing;
 insert into public.ax_posts (id, title, created_by) values ('22222222-2222-2222-2222-222222222222', '관리자 글', '00000000-0000-0000-0000-0000000000a1') on conflict do nothing;
+insert into public.ax_comments (id, post_id, body, created_by) values ('33333333-3333-3333-3333-333333333333', '22222222-2222-2222-2222-222222222222', '관리자 댓글', '00000000-0000-0000-0000-0000000000a1') on conflict do nothing;
 
 set role authenticated;
 
@@ -58,6 +59,8 @@ select pg_temp.as_user('00000000-0000-0000-0000-0000000000e1');
 select pg_temp.expect('미등록: 실적 안 보임', 'select * from public.ax_reports', false);
 select pg_temp.expect('미등록: 본인 프로필만 보임', 'select * from public.profiles', true);
 select pg_temp.expect('미등록: 팀원 추가 불가', $q$insert into public.members (name, company_id) values ('x','tribe')$q$, false);
+select pg_temp.expect('미등록: 댓글 안 보임', 'select * from public.ax_comments', false);
+select pg_temp.expect('미등록: 댓글 작성 불가', $q$insert into public.ax_comments (post_id, body) values ('22222222-2222-2222-2222-222222222222','x')$q$, false);
 
 -- ---------- 작성자(디지털 소속) ----------
 select pg_temp.as_user('00000000-0000-0000-0000-0000000000b1');
@@ -78,6 +81,15 @@ select pg_temp.expect('작성자: AX 글 작성', $q$insert into public.ax_posts
 select pg_temp.expect('작성자: 진행 중 글은 활용 가능 표시 안 됨', $q$select 1 from public.ax_posts where title='작성자 글' and not usable and created_by=auth.uid()$q$, true);
 select pg_temp.expect('작성자: 남의 AX 글 수정 불가', $q$update public.ax_posts set title='바꿈' where id='22222222-2222-2222-2222-222222222222'$q$, false);
 select pg_temp.expect('작성자: 남의 AX 글 삭제 불가', $q$delete from public.ax_posts where id='22222222-2222-2222-2222-222222222222'$q$, false);
+select pg_temp.expect('작성자: 남의 글에 댓글 작성', $q$insert into public.ax_comments (post_id, body) values ('22222222-2222-2222-2222-222222222222','  작성자 댓글  ')$q$, true);
+select pg_temp.expect('작성자: 댓글 작성자·공백 정리는 서버가', $q$select 1 from public.ax_comments where body='작성자 댓글' and created_by=auth.uid()$q$, true);
+select pg_temp.expect('작성자: 작성자 위장 불가', $q$insert into public.ax_comments (post_id, body, created_by) values ('22222222-2222-2222-2222-222222222222','위장','00000000-0000-0000-0000-0000000000a1') returning 1/(case when created_by=auth.uid() then 0 else 1 end)$q$, false);
+select pg_temp.expect('작성자: 빈 댓글 불가', $q$insert into public.ax_comments (post_id, body) values ('22222222-2222-2222-2222-222222222222','   ')$q$, false);
+select pg_temp.expect('작성자: 본인 댓글 수정', $q$update public.ax_comments set body='작성자 댓글(수정)' where body='작성자 댓글'$q$, true);
+update public.ax_comments set post_id=(select id from public.ax_posts where title='작성자 글') where body='작성자 댓글(수정)';
+select pg_temp.expect('작성자: 댓글을 다른 글로 옮기기 불가', $q$select 1 from public.ax_comments where body='작성자 댓글(수정)' and post_id='22222222-2222-2222-2222-222222222222'$q$, true);
+select pg_temp.expect('작성자: 남의 댓글 수정 불가', $q$update public.ax_comments set body='바꿈' where id='33333333-3333-3333-3333-333333333333'$q$, false);
+select pg_temp.expect('작성자: 남의 댓글 삭제 불가', $q$delete from public.ax_comments where id='33333333-3333-3333-3333-333333333333'$q$, false);
 select pg_temp.expect('작성자: 첨부 업로드 posts/', $q$insert into storage.objects (bucket_id, name) values ('attachments','posts/2026-11/a.pdf')$q$, true);
 select pg_temp.expect('작성자: 첨부 업로드 ax/', $q$insert into storage.objects (bucket_id, name) values ('attachments','ax/corp/2026-11/a.png')$q$, true);
 select pg_temp.expect('작성자: 공지 첨부 업로드 불가', $q$insert into storage.objects (bucket_id, name) values ('attachments','notices/a.pdf')$q$, false);
@@ -90,6 +102,8 @@ select pg_temp.as_user('00000000-0000-0000-0000-0000000000c1');
 select pg_temp.expect('열람자: 실적 열람', 'select * from public.ax_reports', true);
 select pg_temp.expect('열람자: 팀원 추가 불가', $q$insert into public.members (name, company_id) values ('x','tribe')$q$, false);
 select pg_temp.expect('열람자: AX 글 작성 불가', $q$insert into public.ax_posts (title) values ('x')$q$, false);
+select pg_temp.expect('열람자: 댓글 열람', 'select * from public.ax_comments', true);
+select pg_temp.expect('열람자: 댓글 작성 불가', $q$insert into public.ax_comments (post_id, body) values ('22222222-2222-2222-2222-222222222222','x')$q$, false);
 select pg_temp.expect('열람자: 첨부 업로드 불가', $q$insert into storage.objects (bucket_id, name) values ('attachments','posts/x.pdf')$q$, false);
 
 -- ---------- 관리자 ----------
@@ -98,6 +112,10 @@ select pg_temp.expect('관리자: 공지 작성', $q$insert into public.notices 
 select pg_temp.expect('관리자: 실적 검토', $q$insert into public.ax_reviews (report_id, status, comment) values ('11111111-1111-1111-1111-111111111111_2026-11','revise','증빙 누락')$q$, true);
 select pg_temp.expect('관리자: 남의 AX 글 수정', $q$update public.ax_posts set priority='core' where title='작성자 글'$q$, true);
 select pg_temp.expect('관리자: 사용자 목록 열람', 'select * from public.allowed_emails', true);
+select pg_temp.expect('관리자: 남의 댓글 수정 불가(본인만)', $q$update public.ax_comments set body='관리자가 바꿈' where body='작성자 댓글(수정)'$q$, false);
+select pg_temp.expect('관리자: 남의 댓글 삭제', $q$delete from public.ax_comments where body='작성자 댓글(수정)'$q$, true);
+select pg_temp.expect('관리자: 글 삭제하면 댓글도 삭제', $q$delete from public.ax_posts where id='22222222-2222-2222-2222-222222222222'$q$, true);
+select pg_temp.expect('관리자: 지운 글의 댓글 남지 않음', $q$select 1 from public.ax_comments where post_id='22222222-2222-2222-2222-222222222222'$q$, false);
 
 reset role;
 -- 미등록 계정은 관리자 이름 수정만으로 권한이 붙지 않아야 함 (명시적 승인 필요)

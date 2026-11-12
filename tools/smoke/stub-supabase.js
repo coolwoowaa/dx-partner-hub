@@ -60,7 +60,12 @@
       P('p3', '[공통] U+ 이벤트 제작실 PC·MW 초안 자동 조립 도구 구축·배포', '기획서 문구를 U+ 이벤트 디자인 모듈로 조립하는 PC·MW 초안 제작 도구와 설치·검수 가이드 배포', 'common', 'done', true, ['Claude', 'ChatGPT Work', 'Figma Make'], 'output', 'core', '2026-08-07', '2026-10-21', [{ path: 'posts/b.zip', name: 'uplus-event-maker.zip', type: 'application/zip', size: 1 }], '2026-10-27T01:00:00Z'),
       P('p4', '[기업] 기업 홈페이지 벤치마킹·분석 도구 Design Radar 구축·고도화', '국내외 기업 홈페이지의 PC·모바일 화면과 디자인 분석을 월별로 축적하고, U+ 적용 아이디어로 연결하는 도구', 'design', 'done', false, ['Codex'], 'study', 'normal', '2026-07-26', '2026-10-21', [], '2026-11-02T01:00:00Z'),
       P('p2', '[기업] 상품상세 아이콘 파인더 개발·배포', '선형 SVG 아이콘 검색부터 색상·크기 조정, Figma 반입까지 연결하는 아이콘 파인더 제작·배포', 'design', 'done', true, ['Codex'], 'output', 'normal', '2026-06-27', '2026-06-29', [{ path: 'posts/c.zip', name: 'lguplus_icon_finder_v3.zip', type: 'application/zip', size: 1 }], '2026-10-22T01:00:00Z'),
-      P('p7', '[퍼블] 배너 검수기 플러그인 프로토타입', '배너 이미지 명도대비와 디자인 가이드 위반 사항을 자동으로 검사', 'publishing', 'test', false, ['Claude', 'ChatGPT'], 'case', 'high', '2026-11-03', '2026-11-14', [], '2026-11-05T01:00:00Z', '2026-11-03T01:00:00Z', 'u2')]
+      P('p7', '[퍼블] 배너 검수기 플러그인 프로토타입', '배너 이미지 명도대비와 디자인 가이드 위반 사항을 자동으로 검사', 'publishing', 'test', false, ['Claude', 'ChatGPT'], 'case', 'high', '2026-11-03', '2026-11-14', [], '2026-11-05T01:00:00Z', '2026-11-03T01:00:00Z', 'u2')],
+    ax_comments: [
+      { id: 'c1', post_id: 'p1', body: '영상 잘 봤습니다. 기획서 넣는 부분을 조금 더 천천히 보여 주시면 좋겠어요.', created_by: 'u2', created_at: '2026-11-03T02:10:00Z', updated_at: '2026-11-03T02:10:00Z' },
+      { id: 'c2', post_id: 'p1', body: '다음 버전에 반영할게요. 참고 링크: https://example.com/guide', created_by: 'u1', created_at: '2026-11-03T05:40:00Z', updated_at: '2026-11-03T06:10:00Z' },
+      { id: 'c3', post_id: 'p7', body: '명도대비 기준은 KWCAG 4.5:1로 잡으면 될까요?', created_by: 'u3', created_at: '2026-11-06T01:00:00Z', updated_at: '2026-11-06T01:00:00Z' }
+    ]
   };
   window.__DB = DB;
 

@@ -28,7 +28,7 @@ DX디자인팀(정규직)과 협력사(디지털, 기업)가 함께 쓰는 업�
 | `vendor/supabase-2.117.3.js` | supabase-js UMD 빌드를 저장소에 포함(사내망 CDN 차단 대비) |
 | `supabase/schema.sql` | 전체 스키마(새 설치용). 재실행 안전하게 유지 |
 | `supabase/seed.sql` | 그룹 3개, 첫 관리자, 2026년 4~10월 AI 이미지 이관 실적 |
-| `supabase/upgrade-00N-*.sql` | 이미 운영 중인 DB에 적용하는 변경분. 현재 006까지 적용됨 |
+| `supabase/upgrade-00N-*.sql` | 이미 운영 중인 DB에 적용하는 변경분. 006까지 적용됨, 007(AX 실적 댓글)은 운영 DB 실행 확인 필요 |
 | `vercel.json` / `.vercelignore` | 보안 헤더, 검색 노출 차단 / 배포 제외 목록 |
 | `tools/` | 시험 도구(로컬 DB 권한 점검, 가짜 Supabase 화면 점검, Figma 캡처). 배포 제외 |
 
@@ -36,13 +36,13 @@ DX디자인팀(정규직)과 협력사(디지털, 기업)가 함께 쓰는 업�
 
 ## 3. 데이터와 권한
 
-테이블: `companies`(그룹, kind = internal 정규직 / partner 협력사) · `allowed_emails`(등록 사용자 + 초대 코드) · `profiles`(로그인 계정, linked) · `members`(휴가·실적용 팀원 명단, part = design/publishing/etc) · `notices` · `vacations` · `ax_posts`(자유 형식 AX 실적) · `ax_reports`(AI 이미지 월 실적, 팀원×월, member_id 없으면 회사 단위 이관분) · `ax_reviews`(검토) · Storage 버킷 `attachments`(비공개).
+테이블: `companies`(그룹, kind = internal 정규직 / partner 협력사) · `allowed_emails`(등록 사용자 + 초대 코드) · `profiles`(로그인 계정, linked) · `members`(휴가·실적용 팀원 명단, part = design/publishing/etc) · `notices` · `vacations` · `ax_posts`(자유 형식 AX 실적) · `ax_comments`(AX 실적 글 댓글, 글 삭제 시 함께 삭제) · `ax_reports`(AI 이미지 월 실적, 팀원×월, member_id 없으면 회사 단위 이관분) · `ax_reviews`(검토) · Storage 버킷 `attachments`(비공개).
 
 | 권한 (`profiles.role`) | 할 수 있는 일 |
 |---|---|
 | `admin` DX 관리자 | 전부. 공지 작성, AI 이미지 검토·삭제, 그룹·사용자 관리 |
-| `partner` 작성자 | 공지를 뺀 팀원·휴가·AI 이미지 실적·첨부를 **소속과 관계없이** 작성. AX 실적 글은 본인 글만 수정·삭제 |
-| `viewer` | 열람만 |
+| `partner` 작성자 | 공지를 뺀 팀원·휴가·AI 이미지 실적·첨부를 **소속과 관계없이** 작성. AX 실적 글은 본인 글만 수정·삭제. 댓글은 누구 글에나 달고, 본인 댓글만 수정·삭제 |
+| `viewer` | 열람만 (댓글도 읽기만) |
 | `pending` | 아무것도 못 봄(승인 대기) |
 
 화면 표시: `partner` + 정규직 소속 → "팀원", 협력사 소속 → "협력사".
@@ -68,7 +68,8 @@ DX디자인팀(정규직)과 협력사(디지털, 기업)가 함께 쓰는 업�
 - 파스텔 토큰 `--pb/--pp/--pe/--py/--pg/--pt`와 색조 `--h-blue/purple/orange/yellow/green/teal/brown/red/gray`를 재사용한다. 협력사 색: 디지털 = 주황, 기업 = 초록.
 - 글꼴은 Pretendard 우선(없으면 IBM Plex Sans KR). 이모지는 사용자가 요청한 곳(테마 토글, 업무관리 배너)에만 쓴다.
 - 모바일(≤860px)에서는 사이드바가 위쪽 가로 메뉴가 된다. 화면 폭 390px에서 가로 스크롤이 생기지 않아야 한다.
-- 공휴일은 `app.js` 맨 위 `HOLIDAYS`에 있다(현재 2026년). 연말에 다음 해를 추가한다.
+- 공휴일은 `app.js` 맨 위 `HOLIDAYS`에 있다(현재 2026~2027년, 2026년부터 노동절·제헌절 포함). 연말에 다음 해를 추가한다.
+- 홈 계절 수채화 배너: `app.js`의 `SEASONS`(계절별 구성)·`QUOTES`(매일 바뀌는 글귀, 30~50자)·`paintSeason()`. 색은 `--sp-*`(봄)·`--su-*`(여름)·`--au-*`(가을)·`--wi-*`(겨울)·`--ss-*` 토큰. 움직임은 CSS transform만 쓰고, `prefers-reduced-motion`이면 멈춘다.
 
 ## 5. 검증 방법 (도구는 `tools/`, 사용법은 `tools/README.md`)
 
