@@ -71,16 +71,22 @@ const shotsDir = (() => { const i = process.argv.indexOf('--shots'); return i > 
         return n && { q: [...(n.querySelector('blockquote')?.textContent || '')].length, cv: n.querySelectorAll('.ss-art canvas').length }; });
       if (!ss) fail(`${acc.label}/${vp.tag}`, '홈 계절 배너가 없음');
       else { if (ss.q < 30 || ss.q > 50) fail(`${acc.label}/${vp.tag}`, `오늘의 글귀 길이 ${ss.q}자 (30~50자여야 함)`); if (!ss.cv) fail(`${acc.label}/${vp.tag}`, '수채화 캔버스가 그려지지 않음'); }
-      // 홈 대표 공지: 필독+고정 공지가 제목(반짝임)·내용·썸네일과 함께 보이고, 누르면 공지가 열림
+      // 홈 대표 공지: 필독+고정 공지가 맨 아래 공지사항 목록 왼쪽(모바일은 위)에 작은 카드로 보이고, 제목 반짝임·내용·썸네일이 있으며 누르면 공지가 열림
       const hn = await p.evaluate(() => { const n = document.querySelector('.hn'); if (!n) return null; const sh = n.querySelector('.shine'), img = n.querySelector('.hn-thumb img');
-        return { title: sh?.textContent || '', anim: getComputedStyle(sh).animationName, body: (n.querySelector('.hn-text')?.textContent || '').length, link: !!n.querySelector('.hn-text a'), img: !!(img && img.getAttribute('src')) }; });
+        const r = n.getBoundingClientRect(), l = n.parentElement.querySelector('.nlist').getBoundingClientRect(), view = document.querySelector('#view');
+        return { title: sh?.textContent || '', anim: getComputedStyle(sh).animationName, body: (n.querySelector('.hn-text')?.textContent || '').length, img: !!(img && img.getAttribute('src')),
+          h: Math.round(r.height), left: r.right <= l.left + 1, above: r.bottom <= l.top + 1, last: !!n.closest('.dash-grid') && n.closest('.dcard').getBoundingClientRect().top > view.querySelector('.ptiles').getBoundingClientRect().bottom,
+          dup: [...n.parentElement.querySelectorAll('.nlist .nt')].some(x => x.textContent.includes(sh.textContent)) }; });
       if (!hn) fail(`${acc.label}/${vp.tag}`, '홈에 대표 공지가 없음');
       else {
         if (!/11월 AI 이미지 실적 제출 안내/.test(hn.title)) fail(`${acc.label}/${vp.tag}`, `대표 공지 제목이 다름: ${hn.title}`);
         if (hn.anim !== 'hn-shine') fail(`${acc.label}/${vp.tag}`, `제목 반짝임이 적용되지 않음 (${hn.anim})`);
-        if (hn.body < 40 || !hn.link) fail(`${acc.label}/${vp.tag}`, '대표 공지 내용(링크 포함)이 보이지 않음');
+        if (hn.body < 40) fail(`${acc.label}/${vp.tag}`, '대표 공지 내용이 보이지 않음');
+        if (!hn.last || !(vp.tag === 'PC' ? hn.left : hn.above)) fail(`${acc.label}/${vp.tag}`, `대표 공지 위치가 다름 (맨 아래 공지사항 목록의 ${vp.tag === 'PC' ? '왼쪽' : '위'}이어야 함)`);
+        if (hn.h > (vp.tag === 'PC' ? 290 : 170)) fail(`${acc.label}/${vp.tag}`, `대표 공지 카드가 너무 큼 (높이 ${hn.h}px)`);
+        if (hn.dup) fail(`${acc.label}/${vp.tag}`, '대표 공지가 오른쪽 목록에도 중복으로 나옴');
         if (!hn.img) fail(`${acc.label}/${vp.tag}`, '대표 공지 썸네일이 불러와지지 않음');
-        await p.click('.hn-title'); await p.waitForTimeout(150);
+        await p.click('.hn'); await p.waitForTimeout(150);
         if (!/홈 대표 공지/.test((await p.textContent('#modal .mh').catch(() => '')) || '')) fail(`${acc.label}/${vp.tag}`, '대표 공지 제목을 눌러도 공지가 열리지 않음');
         await p.keyboard.press('Escape'); await p.waitForTimeout(80);
       }

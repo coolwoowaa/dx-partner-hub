@@ -590,21 +590,22 @@ const ICONS = {
 };
 ICONS.horn = '<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M10 27a5 5 0 0 1 5-5h9l20-11a3 3 0 0 1 4.5 2.6v36.8A3 3 0 0 1 44 53L24 42h-9a5 5 0 0 1-5-5z" fill="currentColor" opacity=".55"/><path d="M18 42h9l3 12a3 3 0 0 1-3 3.6h-3.4a3 3 0 0 1-2.9-2.3z" fill="currentColor" opacity=".3"/><path d="M53 24a10 10 0 0 1 0 16" stroke="currentColor" stroke-width="4.5" fill="none" stroke-linecap="round"/></svg>';
 const SPARK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1c1 6.5 3.5 9 10 11-6.5 2-9 4.5-10 11-1-6.5-3.5-9-10-11 6.5-2 9-4.5 10-11z" fill="currentColor"/></svg>';
-/* 홈 대표 공지: '필독'이면서 '상단 고정'인 공지 중 가장 최근 1건. 첨부 이미지 중 첫 번째가 썸네일이 된다. */
+/* 홈 대표 공지: '필독'이면서 '상단 고정'인 공지 중 가장 최근 1건을 홈 맨 아래 공지사항 목록 왼쪽에 작은 카드로 보여 준다.
+ * 첨부 이미지 중 첫 번째가 썸네일이 된다. 카드 전체가 버튼 하나라서 안에는 링크를 넣지 않는다(내용은 자세히 보기에서). */
 const featuredNotice = () => sortedNotices().find(n => n.pinned && n.category==='must');
 const SHINE_S = 3.6;
 function heroNotice(n){
   const thumb = (n.attachments || []).find(f => isImg(f) && f.path), files = (n.attachments || []).length;
   const d = -((performance.now() / 1000) % SHINE_S);   // 화면을 다시 그려도 반짝임이 처음부터 다시 시작하지 않게 이어 붙인다
-  const body = String(n.body || '').trim();
-  return `<section class="hn" aria-label="대표 공지">
-    <button class="hn-thumb ${thumb ? '' : 'none'}" data-act="notice-view" data-id="${esc(n.id)}" aria-label="${esc(n.title)} 자세히 보기" tabindex="-1">${thumb ? `<img alt="" data-path="${esc(thumb.path)}">` : ICONS.horn}</button>
-    <div class="hn-body">
-      <div class="hn-top"><span class="chip bad">필독</span><span class="chip acc">대표 공지</span>${(Date.now() - ts(n.createdAt)) < 3*864e5 ? '<span class="nbadge">N</span>' : ''}</div>
-      <h2 class="hn-h"><button class="hn-title" data-act="notice-view" data-id="${esc(n.id)}"><span class="shine" style="animation-delay:${d.toFixed(2)}s">${esc(n.title)}</span><i class="hn-spark" style="animation-delay:${d.toFixed(2)}s">${SPARK}</i><i class="hn-spark s2" style="animation-delay:${(d - 1.1).toFixed(2)}s">${SPARK}</i></button></h2>
-      ${body ? `<p class="hn-text">${linkify(body)}</p>` : ''}
-      <div class="hn-foot">${who(n.createdBy)}<span class="num muted">${fmtTs(n.createdAt)}</span>${files ? `<span class="muted">첨부 ${files}개</span>` : ''}<button class="btn sm" data-act="notice-view" data-id="${esc(n.id)}">자세히 보기</button></div>
-    </div></section>`;
+  const body = String(n.body || '').trim().replace(/\n\s*\n+/g, '\n');   // 작은 카드라 빈 줄은 접는다
+  return `<button class="hn" data-act="notice-view" data-id="${esc(n.id)}" aria-label="대표 공지 · ${esc(n.title)} 자세히 보기">
+    <span class="hn-thumb ${thumb ? '' : 'none'}">${thumb ? `<img alt="" data-path="${esc(thumb.path)}">` : ICONS.horn}</span>
+    <span class="hn-body">
+      <span class="hn-top"><span class="chip bad">필독</span><span class="chip acc">대표 공지</span>${(Date.now() - ts(n.createdAt)) < 3*864e5 ? '<span class="nbadge">N</span>' : ''}<span class="hn-sparks" aria-hidden="true"><i class="hn-spark" style="animation-delay:${d.toFixed(2)}s">${SPARK}</i><i class="hn-spark s2" style="animation-delay:${(d - 1.1).toFixed(2)}s">${SPARK}</i></span></span>
+      <b class="hn-h"><span class="shine" style="animation-delay:${d.toFixed(2)}s">${esc(n.title)}</span></b>
+      ${body ? `<span class="hn-text">${esc(body)}</span>` : ''}
+      <span class="hn-foot"><span>${esc(nameOf(n.createdBy))}</span><span class="num">${fmtTs(n.createdAt)}</span>${files ? `<span>첨부 ${files}</span>` : ''}</span>
+    </span></button>`;
 }
 function weekDays(){
   const d = parse(TODAY), g = d.getDay();
@@ -662,15 +663,14 @@ function vHome(){
   const sel = S.homeDay && week.includes(S.homeDay) ? S.homeDay : TODAY, sd = parse(sel);
   const evs = dayEvents(sel);
 
-  const nlist = sortedNotices().filter(n => S.homeNotice==='all' || n.category==='must').slice(0, 5);
-  const feat = featuredNotice();
+  const feat = featuredNotice();   // 대표 공지는 왼쪽에 따로 보이므로 오른쪽 목록에서는 뺀다
+  const nlist = sortedNotices().filter(n => n.id !== feat?.id && (S.homeNotice==='all' || n.category==='must')).slice(0, 5);
 
   return `
   <div class="dash-head"><div><p class="muted" style="margin:0 0 2px">${now.getFullYear()}년 ${now.getMonth()+1}월 ${now.getDate()}일 ${DOW[now.getDay()]}요일${unreadAlerts() ? ` · <a class="al-link" href="#alerts">새 알림 ${unreadAlerts()}건</a>` : ''}</p><h1>안녕하세요, ${esc(hello)}님</h1></div>
     <div class="row">${canW() ? `<button class="btn" data-act="vac-new">휴가 등록</button><button class="btn" data-act="ax-new">AI 이미지 제출</button><button class="btn pri" data-act="post-new">+ AX 실적 올리기</button>` : ''}</div></div>
 
   <div id="season-slot" class="ss-slot"></div>
-  ${feat ? heroNotice(feat) : ''}
 
   <div class="ptiles">${tiles}</div>
 
@@ -683,11 +683,11 @@ function vHome(){
         return `<button class="wkday ${d===TODAY?'today':''} ${d===sel?'sel':''} ${g===0||HOLIDAYS[d]?'red':''}" data-act="hday" data-d="${d}" aria-pressed="${d===sel}"><small>${DOW[g]}</small><span class="num">${dd.getDate()}</span><i class="${has?'on':''}"></i></button>`; }).join('')}</div>
       <ul class="tl">${evs.length ? evs.map(e => `<li><span class="tl-k">${e.k}</span><span class="tl-v">${e.html}</span></li>`).join('') : `<li class="tl-empty">${loading('vacations') ? '불러오는 중…' : '휴가·일정이 없는 날이에요'}</li>`}</ul></section>
 
-    <section class="dcard span-7"><div class="dcard-h"><div class="tabs" role="tablist"><button role="tab" class="${S.homeNotice==='all'?'on':''}" data-act="hnotice" data-k="all" aria-selected="${S.homeNotice==='all'}">공지사항</button><button role="tab" class="${S.homeNotice==='must'?'on':''}" data-act="hnotice" data-k="must" aria-selected="${S.homeNotice==='must'}">필독</button></div><a class="more" href="#notice">더보기</a></div>
-      <ul class="nlist">${nlist.length ? nlist.map(n => `<li><button data-act="notice-view" data-id="${esc(n.id)}"><span class="nt">${n.pinned ? '<span class="chip acc" style="height:18px;font-size:10.5px">고정</span>' : ''}${esc(n.title)}${(Date.now() - ts(n.createdAt)) < 3*864e5 ? '<span class="nbadge">N</span>' : ''}</span><span class="num muted">${fmtTs(n.createdAt)}</span></button></li>`).join('')
-        : `<li class="tl-empty">${loading('notices') ? '불러오는 중…' : S.homeNotice==='must' ? '필독 공지가 없어요' : '등록된 공지가 없어요'}</li>`}</ul></section>
+    <section class="dcard span-8"><div class="dcard-h"><div class="tabs" role="tablist"><button role="tab" class="${S.homeNotice==='all'?'on':''}" data-act="hnotice" data-k="all" aria-selected="${S.homeNotice==='all'}">공지사항</button><button role="tab" class="${S.homeNotice==='must'?'on':''}" data-act="hnotice" data-k="must" aria-selected="${S.homeNotice==='must'}">필독</button></div><a class="more" href="#notice">더보기</a></div>
+      <div class="ncols ${feat ? 'has-hn' : ''}">${feat ? heroNotice(feat) : ''}<ul class="nlist">${nlist.length ? nlist.map(n => `<li><button data-act="notice-view" data-id="${esc(n.id)}"><span class="nt">${n.pinned ? '<span class="chip acc" style="height:18px;font-size:10.5px">고정</span>' : ''}${esc(n.title)}${(Date.now() - ts(n.createdAt)) < 3*864e5 ? '<span class="nbadge">N</span>' : ''}</span><span class="num muted">${fmtTs(n.createdAt)}</span></button></li>`).join('')
+        : `<li class="tl-empty">${loading('notices') ? '불러오는 중…' : S.homeNotice==='must' ? (feat ? '다른 필독 공지가 없어요' : '필독 공지가 없어요') : (feat ? '다른 공지가 없어요' : '등록된 공지가 없어요')}</li>`}</ul></div></section>
 
-    <section class="dcard span-5"><div class="dcard-h"><h2>${Number(rm.slice(5))}월 AI 이미지 제작</h2><a class="more" href="#aiimg" data-act="ax-goto" data-month="${rm}">현황판</a></div>
+    <section class="dcard span-4"><div class="dcard-h"><h2>${Number(rm.slice(5))}월 AI 이미지 제작</h2><a class="more" href="#aiimg" data-act="ax-goto" data-month="${rm}">현황판</a></div>
       ${S.isAdmin && pc ? `<div class="callout"><span>검토를 기다리는 AI 이미지 실적이</span><b class="num">${pc}건</b><span>있어요!</span></div>`
         : `<div class="callout calm"><span>${legacyRm ? '기존 현황판의 회사 단위 기록이에요' : `디자이너 제출 <b class="num">${subMem.size}/${dm.length}명</b>`}</span></div>`}
       <div class="bars">${pcos.map(c => { const sm = sumAx(axRm.filter(a => a.companyId===c.id)), r = pct(sm.ai, sm.tot);
@@ -1397,8 +1397,8 @@ function noticeForm(id){
 function syncNoticeForm(){
   const h = $('#n-feat'); if (!h) return;
   const on = $('#n-cat').value==='must' && $('#n-pin').checked;
-  h.innerHTML = on ? '<b style="color:var(--accent)">홈 대시보드에 대표 공지로 크게 표시됩니다.</b> 내용이 함께 보이고, 첨부한 이미지 중 첫 번째가 썸네일이 됩니다. (여러 개면 가장 최근 공지 1건)'
-    : '분류를 ‘필독’으로 하고 ‘목록 상단에 고정’을 함께 켜면 홈 대시보드에 대표 공지로 크게 표시됩니다.';
+  h.innerHTML = on ? '<b style="color:var(--accent)">홈 대시보드 공지사항 왼쪽에 대표 공지로 표시됩니다.</b> 제목이 반짝이고 내용 앞부분이 함께 보이며, 첨부한 이미지 중 첫 번째가 썸네일이 됩니다. (여러 개면 가장 최근 공지 1건)'
+    : '분류를 ‘필독’으로 하고 ‘목록 상단에 고정’을 함께 켜면 홈 대시보드 공지사항 왼쪽에 대표 공지로 표시됩니다.';
 }
 
 async function saveNotice(){
