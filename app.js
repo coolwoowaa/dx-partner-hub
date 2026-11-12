@@ -588,6 +588,24 @@ const ICONS = {
   image: '<svg viewBox="0 0 64 64" aria-hidden="true"><rect x="6" y="12" width="52" height="42" rx="11" fill="currentColor" opacity=".22"/><circle cx="22" cy="27" r="6" fill="currentColor" opacity=".7"/><path d="M10 50l15-15 9 9 8-7 14 13z" fill="currentColor" opacity=".75"/></svg>',
   check: '<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M10 14a8 8 0 0 1 8-8h28a8 8 0 0 1 8 8v24a8 8 0 0 1-8 8H30l-12 10v-10h0a8 8 0 0 1-8-8z" fill="currentColor" opacity=".25"/><path d="M21 26l7 7 15-15" stroke="currentColor" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>'
 };
+ICONS.horn = '<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M10 27a5 5 0 0 1 5-5h9l20-11a3 3 0 0 1 4.5 2.6v36.8A3 3 0 0 1 44 53L24 42h-9a5 5 0 0 1-5-5z" fill="currentColor" opacity=".55"/><path d="M18 42h9l3 12a3 3 0 0 1-3 3.6h-3.4a3 3 0 0 1-2.9-2.3z" fill="currentColor" opacity=".3"/><path d="M53 24a10 10 0 0 1 0 16" stroke="currentColor" stroke-width="4.5" fill="none" stroke-linecap="round"/></svg>';
+const SPARK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1c1 6.5 3.5 9 10 11-6.5 2-9 4.5-10 11-1-6.5-3.5-9-10-11 6.5-2 9-4.5 10-11z" fill="currentColor"/></svg>';
+/* 홈 대표 공지: '필독'이면서 '상단 고정'인 공지 중 가장 최근 1건. 첨부 이미지 중 첫 번째가 썸네일이 된다. */
+const featuredNotice = () => sortedNotices().find(n => n.pinned && n.category==='must');
+const SHINE_S = 3.6;
+function heroNotice(n){
+  const thumb = (n.attachments || []).find(f => isImg(f) && f.path), files = (n.attachments || []).length;
+  const d = -((performance.now() / 1000) % SHINE_S);   // 화면을 다시 그려도 반짝임이 처음부터 다시 시작하지 않게 이어 붙인다
+  const body = String(n.body || '').trim();
+  return `<section class="hn" aria-label="대표 공지">
+    <button class="hn-thumb ${thumb ? '' : 'none'}" data-act="notice-view" data-id="${esc(n.id)}" aria-label="${esc(n.title)} 자세히 보기" tabindex="-1">${thumb ? `<img alt="" data-path="${esc(thumb.path)}">` : ICONS.horn}</button>
+    <div class="hn-body">
+      <div class="hn-top"><span class="chip bad">필독</span><span class="chip acc">대표 공지</span>${(Date.now() - ts(n.createdAt)) < 3*864e5 ? '<span class="nbadge">N</span>' : ''}</div>
+      <h2 class="hn-h"><button class="hn-title" data-act="notice-view" data-id="${esc(n.id)}"><span class="shine" style="animation-delay:${d.toFixed(2)}s">${esc(n.title)}</span><i class="hn-spark" style="animation-delay:${d.toFixed(2)}s">${SPARK}</i><i class="hn-spark s2" style="animation-delay:${(d - 1.1).toFixed(2)}s">${SPARK}</i></button></h2>
+      ${body ? `<p class="hn-text">${linkify(body)}</p>` : ''}
+      <div class="hn-foot">${who(n.createdBy)}<span class="num muted">${fmtTs(n.createdAt)}</span>${files ? `<span class="muted">첨부 ${files}개</span>` : ''}<button class="btn sm" data-act="notice-view" data-id="${esc(n.id)}">자세히 보기</button></div>
+    </div></section>`;
+}
 function weekDays(){
   const d = parse(TODAY), g = d.getDay();
   const mon = addDays(d, g===0 ? 1 : g===6 ? 2 : 1-g);
@@ -645,12 +663,14 @@ function vHome(){
   const evs = dayEvents(sel);
 
   const nlist = sortedNotices().filter(n => S.homeNotice==='all' || n.category==='must').slice(0, 5);
+  const feat = featuredNotice();
 
   return `
   <div class="dash-head"><div><p class="muted" style="margin:0 0 2px">${now.getFullYear()}년 ${now.getMonth()+1}월 ${now.getDate()}일 ${DOW[now.getDay()]}요일${unreadAlerts() ? ` · <a class="al-link" href="#alerts">새 알림 ${unreadAlerts()}건</a>` : ''}</p><h1>안녕하세요, ${esc(hello)}님</h1></div>
     <div class="row">${canW() ? `<button class="btn" data-act="vac-new">휴가 등록</button><button class="btn" data-act="ax-new">AI 이미지 제출</button><button class="btn pri" data-act="post-new">+ AX 실적 올리기</button>` : ''}</div></div>
 
   <div id="season-slot" class="ss-slot"></div>
+  ${feat ? heroNotice(feat) : ''}
 
   <div class="ptiles">${tiles}</div>
 
@@ -754,11 +774,11 @@ function vNotice(){
 }
 function renderNoticeList(){
   const tb = $('#notice-list'); if (!tb) return;
-  const q = S.noticeQ.trim().toLowerCase();
+  const q = S.noticeQ.trim().toLowerCase(), featId = featuredNotice()?.id;
   const list = sortedNotices().filter(n => (S.noticeCat==='all' || n.category===S.noticeCat) && (!q || (n.title+' '+n.body).toLowerCase().includes(q)));
   tb.innerHTML = list.length ? list.map(n => `<tr class="click" data-act="notice-view" data-id="${esc(n.id)}">
     <td><span class="chip ${n.category==='must'?'bad':''}">${NCATS[n.category]||'공지'}</span></td>
-    <td><span class="t-title">${n.pinned?'<span class="chip acc" style="height:18px;font-size:10.5px;margin-right:4px">고정</span>':''}${esc(n.title)}</span><span class="t-sub">${esc(String(n.body||'').slice(0,80))}</span></td>
+    <td><span class="t-title">${n.pinned?'<span class="chip acc" style="height:18px;font-size:10.5px;margin-right:4px">고정</span>':''}${n.id===featId?'<span class="chip warn" style="height:18px;font-size:10.5px;margin-right:4px">홈 대표</span>':''}${esc(n.title)}</span><span class="t-sub">${esc(String(n.body||'').slice(0,80))}</span></td>
     <td class="c num">${(n.attachments||[]).length || '—'}</td><td>${who(n.createdBy)}</td><td class="num">${fmtTs(n.createdAt)}</td></tr>`).join('')
     : emptyRow(5, loading('notices') ? '불러오는 중…' : q || S.noticeCat!=='all' ? '<b>조건에 맞는 공지가 없습니다</b>검색어나 분류를 바꿔보세요.' : `<b>등록된 공지가 없습니다</b>${S.isAdmin ? '오른쪽 위 ‘공지 작성’으로 첫 공지를 올리세요.' : 'DX디자인팀이 공지를 올리면 여기에 표시됩니다.'}`);
 }
@@ -1353,7 +1373,7 @@ function lightbox(path, name){
 /* notice */
 function noticeView(id){
   const n = S.notices.find(x => x.id===id); if (!n) return;
-  openModal(`${mhead(esc(n.title), `${NCATS[n.category]||'공지'}${n.pinned?' · 상단 고정':''} · ${esc(nameOf(n.createdBy))} · ${fmtTs(n.createdAt)}${n.updatedAt && ts(n.updatedAt) - ts(n.createdAt) > 60e3 ? ' (수정 '+fmtTs(n.updatedAt)+')' : ''}`)}
+  openModal(`${mhead(esc(n.title), `${NCATS[n.category]||'공지'}${n.pinned?' · 상단 고정':''}${featuredNotice()?.id===n.id?' · 홈 대표 공지':''} · ${esc(nameOf(n.createdBy))} · ${fmtTs(n.createdAt)}${n.updatedAt && ts(n.updatedAt) - ts(n.createdAt) > 60e3 ? ' (수정 '+fmtTs(n.updatedAt)+')' : ''}`)}
     <div class="mb"><div class="body-text">${esc(n.body)}</div>${(n.attachments||[]).length ? `<div class="f"><span class="lab">첨부파일 ${n.attachments.length}개</span>${attachView(n.attachments)}</div>` : ''}</div>
     <div class="mf">${S.isAdmin ? `<span class="left" id="del-zone"><button class="btn danger" data-act="ask-del">삭제</button></span><button class="btn" data-act="notice-edit" data-id="${esc(n.id)}">수정</button>` : ''}<button class="btn ink" data-act="close">닫기</button></div>`, true);
   delTarget = {kind:'notice', id};
@@ -1365,13 +1385,22 @@ function noticeForm(id){
     <div class="f"><label for="n-title">제목</label><input type="text" id="n-title" maxlength="120" value="${esc(n?.title||'')}" required></div>
     <div class="fr"><div class="f"><label for="n-cat">분류</label><select id="n-cat">${Object.entries(NCATS).map(([k,l]) => `<option value="${k}" ${(n?.category||'notice')===k?'selected':''}>${l}</option>`).join('')}</select></div>
       <div class="f"><span class="lab">노출</span><label class="check" style="height:36px"><input type="checkbox" id="n-pin" ${n?.pinned?'checked':''}> 목록 상단에 고정</label></div></div>
+    <div class="hint" id="n-feat"></div>
     <div class="f"><label for="n-body">내용</label><textarea id="n-body" rows="9" maxlength="20000">${esc(n?.body||'')}</textarea></div>
     ${attachField(n?.attachments, 'notices')}
     <div class="err" id="f-err"></div>
   </form>
   <div class="mf"><button class="btn" data-act="close">취소</button><button class="btn pri" data-submit="f-notice">${n ? '저장' : '등록'}</button></div>`, true);
   $('#f-notice').dataset.id = id || '';
+  syncNoticeForm();
 }
+function syncNoticeForm(){
+  const h = $('#n-feat'); if (!h) return;
+  const on = $('#n-cat').value==='must' && $('#n-pin').checked;
+  h.innerHTML = on ? '<b style="color:var(--accent)">홈 대시보드에 대표 공지로 크게 표시됩니다.</b> 내용이 함께 보이고, 첨부한 이미지 중 첫 번째가 썸네일이 됩니다. (여러 개면 가장 최근 공지 1건)'
+    : '분류를 ‘필독’으로 하고 ‘목록 상단에 고정’을 함께 켜면 홈 대시보드에 대표 공지로 크게 표시됩니다.';
+}
+
 async function saveNotice(){
   const title = $('#n-title').value.trim(), body = $('#n-body').value.trim();
   if (!title) return $('#f-err').textContent = '제목을 입력해주세요.';
@@ -1738,6 +1767,7 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => {
   const id = e.target.id;
   if (id==='v-type' || id==='v-start' || id==='v-end') syncVacForm();
+  if (id==='n-cat' || id==='n-pin') syncNoticeForm();
   if (id==='a-mem' || id==='a-month') loadAxForm();
   if (id==='upl-in') { addFiles([...e.target.files]); e.target.value = ''; }
   if (id==='m-photo' && e.target.files[0]) { pickMemPhoto(e.target.files[0]); e.target.value = ''; }

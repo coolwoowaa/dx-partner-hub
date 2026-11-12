@@ -71,6 +71,19 @@ const shotsDir = (() => { const i = process.argv.indexOf('--shots'); return i > 
         return n && { q: [...(n.querySelector('blockquote')?.textContent || '')].length, cv: n.querySelectorAll('.ss-art canvas').length }; });
       if (!ss) fail(`${acc.label}/${vp.tag}`, '홈 계절 배너가 없음');
       else { if (ss.q < 30 || ss.q > 50) fail(`${acc.label}/${vp.tag}`, `오늘의 글귀 길이 ${ss.q}자 (30~50자여야 함)`); if (!ss.cv) fail(`${acc.label}/${vp.tag}`, '수채화 캔버스가 그려지지 않음'); }
+      // 홈 대표 공지: 필독+고정 공지가 제목(반짝임)·내용·썸네일과 함께 보이고, 누르면 공지가 열림
+      const hn = await p.evaluate(() => { const n = document.querySelector('.hn'); if (!n) return null; const sh = n.querySelector('.shine'), img = n.querySelector('.hn-thumb img');
+        return { title: sh?.textContent || '', anim: getComputedStyle(sh).animationName, body: (n.querySelector('.hn-text')?.textContent || '').length, link: !!n.querySelector('.hn-text a'), img: !!(img && img.getAttribute('src')) }; });
+      if (!hn) fail(`${acc.label}/${vp.tag}`, '홈에 대표 공지가 없음');
+      else {
+        if (!/11월 AI 이미지 실적 제출 안내/.test(hn.title)) fail(`${acc.label}/${vp.tag}`, `대표 공지 제목이 다름: ${hn.title}`);
+        if (hn.anim !== 'hn-shine') fail(`${acc.label}/${vp.tag}`, `제목 반짝임이 적용되지 않음 (${hn.anim})`);
+        if (hn.body < 40 || !hn.link) fail(`${acc.label}/${vp.tag}`, '대표 공지 내용(링크 포함)이 보이지 않음');
+        if (!hn.img) fail(`${acc.label}/${vp.tag}`, '대표 공지 썸네일이 불러와지지 않음');
+        await p.click('.hn-title'); await p.waitForTimeout(150);
+        if (!/홈 대표 공지/.test((await p.textContent('#modal .mh').catch(() => '')) || '')) fail(`${acc.label}/${vp.tag}`, '대표 공지 제목을 눌러도 공지가 열리지 않음');
+        await p.keyboard.press('Escape'); await p.waitForTimeout(80);
+      }
       await p.click('.wkday:nth-child(3)'); await p.waitForTimeout(150);
       if (!(await p.evaluate(() => window.__ss && window.__ss === document.querySelector('.ss')))) fail(`${acc.label}/${vp.tag}`, '홈을 다시 그릴 때 계절 배너가 새로 만들어짐');
       // AX 실적 댓글: 열람 전용은 입력창 없음, 작성 권한이 있으면 등록되고 목록에 보임
@@ -201,5 +214,5 @@ const shotsDir = (() => { const i = process.argv.indexOf('--shots'); return i > 
   await b.close();
   notes.forEach(n => console.log('· ' + n));
   if (problems.length) { console.log(`\n결과: 문제 ${problems.length}건`); problems.forEach(x => console.log(' - ' + x)); process.exit(1); }
-  console.log('\n결과: 통과 (계정 4종 × 화면 9개 × PC·모바일, 계절 배너, 알림, 댓글, 제출 현황, 엑셀 내보내기, 폼 열기, 승인 대기·로그인·비밀번호 만들기)');
+  console.log('\n결과: 통과 (계정 4종 × 화면 9개 × PC·모바일, 계절 배너, 대표 공지, 알림, 댓글, 제출 현황, 엑셀 내보내기, 폼 열기, 승인 대기·로그인·비밀번호 만들기)');
 })();

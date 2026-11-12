@@ -51,7 +51,7 @@
       { id: 'm5', name: '퍼블리셔 E', company_id: 'corp', title: '', part: 'publishing' }, { id: 'm6', name: '팀원 F', company_id: 'dx', title: '', part: 'design' },
       { id: 'm7', name: '디자이너 G', company_id: 'corp', title: '배너', part: 'design' }],
     notices: [
-      { id: 'n1', title: '11월 AI 이미지 실적 제출 안내', body: '디자인 파트는 11월 실적을 12월 5일까지 제출해 주세요.', category: 'must', pinned: true, attachments: [], created_by: 'u1', created_at: '2026-11-07T00:00:00Z', updated_at: '2026-11-07T00:00:00Z' },
+      { id: 'n1', title: '11월 AI 이미지 실적 제출 안내', body: '디자인 파트는 11월 실적을 12월 5일까지 제출해 주세요.\n\n1) AI 이미지 제작 메뉴에서 본인 이름을 골라 건수를 입력합니다.\n2) 증빙 파일(작업 화면 캡처나 결과물)을 함께 첨부합니다.\n3) 보완 요청을 받으면 알림에서 확인하고 다시 제출합니다.\n\n문의: https://example.com/help', category: 'must', pinned: true, attachments: [{ path: 'notices/thumb-demo.png', name: '제출 안내.png', type: 'image/png', size: 1 }], created_by: 'u1', created_at: '2026-11-07T00:00:00Z', updated_at: '2026-11-07T00:00:00Z' },
       { id: 'n2', title: '디지털/기업 허브 오픈 안내', body: '', category: 'notice', pinned: false, attachments: [{ path: 'notices/guide.pdf', name: '사용 가이드.pdf', type: 'application/pdf', size: 1 }], created_by: 'u1', created_at: '2026-11-06T00:00:00Z', updated_at: '2026-11-06T00:00:00Z' },
       { id: 'n3', title: 'AX 실적 작성 가이드 (파트·상태·활용 가능 표시)', body: '', category: 'guide', pinned: false, attachments: [], created_by: 'u1', created_at: '2026-11-06T00:00:00Z', updated_at: '2026-11-06T00:00:00Z' }],
     vacations: [
@@ -109,6 +109,9 @@
     return b;
   }
   const tiny = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="30"><rect width="40" height="30" fill="#9ab"/></svg>');
+  // 대표 공지 썸네일용 데모 그림 (경로에 thumb 가 들어간 파일)
+  const demoThumb = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffe3d3"/><stop offset="1" stop-color="#dfe6ff"/></linearGradient></defs><rect width="400" height="300" fill="url(#g)"/><circle cx="318" cy="76" r="46" fill="#ffc98a" opacity=".85"/><rect x="58" y="92" width="186" height="140" rx="16" fill="#fff" opacity=".92"/><rect x="80" y="118" width="96" height="12" rx="6" fill="#2d5bea"/><rect x="80" y="144" width="142" height="9" rx="4.5" fill="#c9d2e3"/><rect x="80" y="164" width="120" height="9" rx="4.5" fill="#c9d2e3"/><rect x="80" y="184" width="134" height="9" rx="4.5" fill="#c9d2e3"/><path d="M262 232l44-70 34 44 20-24 40 50z" fill="#8fb3ff" opacity=".9"/><circle cx="286" cy="150" r="13" fill="#fff" opacity=".9"/></svg>');
+  const urlOf = p => /thumb/.test(p) ? demoThumb : tiny;
   window.supabase = { createClient() { return {
     from: qb,
     auth: {
@@ -131,8 +134,8 @@
       window.__rpc = { fn, args }; return { error: null };
     },
     storage: { from() { return {
-      createSignedUrls: async ps => ({ data: ps.map(p => ({ path: p, signedUrl: tiny })) }),
-      createSignedUrl: async () => ({ data: { signedUrl: tiny } }),
+      createSignedUrls: async ps => ({ data: ps.map(p => ({ path: p, signedUrl: urlOf(p) })) }),
+      createSignedUrl: async p => ({ data: { signedUrl: urlOf(p) } }),
       upload: async () => ({ error: null }), remove: async () => ({})
     }; } },
     channel() { return { on() { return this; }, subscribe() { return this; } }; }
