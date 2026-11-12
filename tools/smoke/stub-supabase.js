@@ -44,7 +44,8 @@
     members: [
       { id: 'm1', name: '디자이너 A', company_id: 'tribe', title: '2D', part: 'design' }, { id: 'm2', name: '디자이너 B', company_id: 'tribe', title: '3D', part: 'design' },
       { id: 'm3', name: '퍼블리셔 C', company_id: 'tribe', title: '', part: 'publishing' }, { id: 'm4', name: '디자이너 D', company_id: 'corp', title: '상품상세', part: 'design' },
-      { id: 'm5', name: '퍼블리셔 E', company_id: 'corp', title: '', part: 'publishing' }, { id: 'm6', name: '팀원 F', company_id: 'dx', title: '', part: 'design' }],
+      { id: 'm5', name: '퍼블리셔 E', company_id: 'corp', title: '', part: 'publishing' }, { id: 'm6', name: '팀원 F', company_id: 'dx', title: '', part: 'design' },
+      { id: 'm7', name: '디자이너 G', company_id: 'corp', title: '배너', part: 'design' }],
     notices: [
       { id: 'n1', title: '11월 AI 이미지 실적 제출 안내', body: '디자인 파트는 11월 실적을 12월 5일까지 제출해 주세요.', category: 'must', pinned: true, attachments: [], created_by: 'u1', created_at: '2026-11-07T00:00:00Z', updated_at: '2026-11-07T00:00:00Z' },
       { id: 'n2', title: '디지털/기업 허브 오픈 안내', body: '', category: 'notice', pinned: false, attachments: [{ path: 'notices/guide.pdf', name: '사용 가이드.pdf', type: 'application/pdf', size: 1 }], created_by: 'u1', created_at: '2026-11-06T00:00:00Z', updated_at: '2026-11-06T00:00:00Z' },

@@ -13,12 +13,13 @@ const ACCOUNTS = [
   { label: '작성자(정규직)', q: 'role=partner&co=dx' },
   { label: '열람 전용', q: 'role=viewer' },
 ];
-const FORMS = ['post-new', 'vac-new', 'ax-new', 'mem-new', 'notice-new', 'user-new'];
+const FORMS = ['post-new', 'vac-new', 'ax-new', 'mem-new', 'notice-new', 'user-new', 'exp-open'];
 const shotsDir = (() => { const i = process.argv.indexOf('--shots'); return i > 0 ? process.argv[i + 1] : null; })();
 
 (async () => {
-  const b = await chromium.launch();
-  const problems = [], notes = [];
+  // LANG: 시험 환경에 언어 설정이 없으면 한글 다운로드 파일 이름이 'download'로 바뀌므로 UTF-8로 지정한다
+  const b = await chromium.launch({ env: { ...process.env, LANG: process.env.LANG || 'C.UTF-8', LC_ALL: process.env.LC_ALL || 'C.UTF-8' } });
+  const problems = [], notes = []; let lastZip = null;
   const fail = (who, msg) => problems.push(`[${who}] ${msg}`);
 
   for (const acc of ACCOUNTS) {
@@ -26,6 +27,7 @@ const shotsDir = (() => { const i = process.argv.indexOf('--shots'); return i > 
       const ctx = await b.newContext({ viewport: { width: vp.w, height: vp.h } });
       const p = await ctx.newPage(); const errs = watchErrors(p); await routeHub(p);
       await p.goto(`${HOST}/?${acc.q}#home`); await p.waitForTimeout(500);
+      const canWrite = acc.label !== '열람 전용';
       for (const r of ROUTES) {
         await p.evaluate(h => location.hash = h, r); await p.waitForTimeout(150);
         const sw = await p.evaluate(() => document.documentElement.scrollWidth);
@@ -59,11 +61,44 @@ const shotsDir = (() => { const i = process.argv.indexOf('--shots'); return i > 
         await p.evaluate(() => { window.__DB.ax_comments = window.__DB.ax_comments.filter(c => c.body !== '시험 댓글입니다'); });
       }
       await p.keyboard.press('Escape'); await p.waitForTimeout(80);
+      // AI 이미지 제출 현황: 미제출·보완 요청 이름이 보이고, 작성 권한이 있으면 안내 문구가 복사됨
+      await p.evaluate(() => { location.hash = 'aiimg'; Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async t => { window.__clip = t; } } }); }); await p.waitForTimeout(200);
+      const subm = (await p.textContent('.subm').catch(() => '')) || '';
+      if (!/디자이너 G/.test(subm) || !/보완 요청/.test(subm)) fail(`${acc.label}/${vp.tag}`, `제출 현황에 미제출·보완 요청이 안 보임: ${subm.slice(0, 80)}`);
+      const copyBtn = await p.$('.sec-h [data-act="remind-copy"]');
+      if (!!copyBtn !== canWrite) fail(`${acc.label}/${vp.tag}`, `안내 문구 복사 버튼 표시가 권한과 다름 (${!!copyBtn})`);
+      if (copyBtn) {
+        await copyBtn.click(); await p.waitForTimeout(100);
+        const clip = (await p.evaluate(() => window.__clip)) || '';
+        if (!/11월 AI 이미지 실적 제출 안내/.test(clip) || !/기업: 디자이너 G/.test(clip) || !/디지털: 디자이너 B/.test(clip) || !/#aiimg/.test(clip)) fail(`${acc.label}/${vp.tag}`, `안내 문구 내용이 이상함: ${clip}`);
+      }
+      // 엑셀 내보내기: 작성 권한이 있을 때만 버튼이 보이고, CSV(BOM)와 전체 백업 ZIP이 내려받아짐
+      await p.evaluate(() => location.hash = 'leave'); await p.waitForTimeout(150);
+      const expBtn = await p.$('[data-act="exp-open"]');
+      if (!!expBtn !== canWrite) fail(`${acc.label}/${vp.tag}`, `엑셀 내보내기 버튼 표시가 권한과 다름 (${!!expBtn})`);
+      if (expBtn) {
+        await expBtn.click(); await p.waitForTimeout(150);
+        const sw3 = await p.evaluate(() => document.documentElement.scrollWidth);
+        if (sw3 > vp.w + 1) fail(`${acc.label}/${vp.tag}`, `내보내기 창에서 가로 스크롤 생김 (폭 ${sw3}px)`);
+        const grab = async sel => { const [d] = await Promise.all([p.waitForEvent('download', { timeout: 5000 }), p.click(sel)]); return { name: d.suggestedFilename(), buf: fs.readFileSync(await d.path()) }; };
+        const csv = await grab('[data-act="exp"][data-k="vac-month"]').catch(e => null);
+        if (!csv) fail(`${acc.label}/${vp.tag}`, '휴가 CSV가 내려받아지지 않음');
+        else {
+          if (!/^허브_휴가_\d{4}-\d{2}_\d{8}\.csv$/.test(csv.name)) fail(`${acc.label}/${vp.tag}`, `CSV 파일 이름이 이상함: ${csv.name}`);
+          const txt = csv.buf.toString('utf8');
+          if (csv.buf[0] !== 0xEF || csv.buf[1] !== 0xBB || !/^\uFEFF팀원,소속,구분,파트,유형,시작일,종료일,차감 일수,기간 내 일수,메모,등록자,등록일\r\n/.test(txt)) fail(`${acc.label}/${vp.tag}`, 'CSV 머리글 또는 BOM이 이상함');
+          if (txt.trim().split('\r\n').length < 2) fail(`${acc.label}/${vp.tag}`, 'CSV에 내용이 없음');
+        }
+        const zip = await grab('[data-act="exp-all"]').catch(e => null);
+        if (!zip || zip.buf.readUInt32LE(0) !== 0x04034b50 || !/\.zip$/.test(zip.name)) fail(`${acc.label}/${vp.tag}`, '전체 백업 ZIP이 내려받아지지 않음');
+        else if (!lastZip) lastZip = zip.buf;
+        await p.keyboard.press('Escape'); await p.waitForTimeout(80);
+      }
       if (vp.tag === 'PC') {
         const opened = [];
         for (const act of FORMS) {
           await p.evaluate(() => location.hash = 'home'); await p.waitForTimeout(80);
-          const ok = await p.evaluate(a => { const route = { 'post-new': 'ax', 'vac-new': 'leave', 'ax-new': 'aiimg', 'mem-new': 'team', 'notice-new': 'notice', 'user-new': 'users' }[a]; location.hash = route; return route; }, act);
+          const ok = await p.evaluate(a => { const route = { 'post-new': 'ax', 'vac-new': 'leave', 'ax-new': 'aiimg', 'mem-new': 'team', 'notice-new': 'notice', 'user-new': 'users', 'exp-open': 'ax' }[a]; location.hash = route; return route; }, act);
           await p.waitForTimeout(150);
           const btn = await p.$(`[data-act="${act}"]`);
           if (!btn) continue;
@@ -99,6 +134,26 @@ const shotsDir = (() => { const i = process.argv.indexOf('--shots'); return i > 
     await ctx.close();
   }
 
+  // 전체 백업 ZIP 구조 확인: 중앙 목록의 파일 수·크기·CRC가 실제 내용과 맞는지
+  if (lastZip) {
+    const crcT = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+    const crc = b => { let c = ~0; for (const x of b) c = crcT[(c ^ x) & 255] ^ (c >>> 8); return ~c >>> 0; };
+    const z = lastZip, eo = z.length - 22, names = [];
+    if (z.readUInt32LE(eo) !== 0x06054b50) fail('전체 백업', 'ZIP 끝 표식이 없음');
+    else {
+      let o = z.readUInt32LE(eo + 16);
+      for (let i = 0; i < z.readUInt16LE(eo + 10); i++) {
+        const size = z.readUInt32LE(o + 24), nl = z.readUInt16LE(o + 28), lo = z.readUInt32LE(o + 42), name = z.slice(o + 46, o + 46 + nl).toString('utf8');
+        const data = z.slice(lo + 30 + z.readUInt16LE(lo + 26), lo + 30 + z.readUInt16LE(lo + 26) + size);
+        if (z.readUInt32LE(lo) !== 0x04034b50 || crc(data) !== z.readUInt32LE(o + 16)) fail('전체 백업', `ZIP 안의 ${name} 이(가) 깨짐`);
+        if (data[0] !== 0xEF) fail('전체 백업', `${name} 에 BOM이 없음`);
+        names.push(name); o += 46 + nl;
+      }
+      if (names.length !== 7) fail('전체 백업', `ZIP 안 파일이 ${names.length}개 (7개여야 함)`);
+      notes.push(`전체 백업 ZIP: ${names.join(', ')}`);
+    }
+  } else fail('전체 백업', 'ZIP을 한 번도 받지 못함');
+
   if (shotsDir) {
     fs.mkdirSync(shotsDir, { recursive: true });
     for (const [theme, vp, tag] of [['light', { width: 1440, height: 1000 }, 'pc-light'], ['dark', { width: 1440, height: 1000 }, 'pc-dark'], ['light', { width: 390, height: 844 }, 'mobile']]) {
@@ -118,5 +173,5 @@ const shotsDir = (() => { const i = process.argv.indexOf('--shots'); return i > 
   await b.close();
   notes.forEach(n => console.log('· ' + n));
   if (problems.length) { console.log(`\n결과: 문제 ${problems.length}건`); problems.forEach(x => console.log(' - ' + x)); process.exit(1); }
-  console.log('\n결과: 통과 (계정 4종 × 화면 8개 × PC·모바일, 계절 배너, 댓글, 폼 열기, 승인 대기·로그인·비밀번호 만들기)');
+  console.log('\n결과: 통과 (계정 4종 × 화면 8개 × PC·모바일, 계절 배너, 댓글, 제출 현황, 엑셀 내보내기, 폼 열기, 승인 대기·로그인·비밀번호 만들기)');
 })();

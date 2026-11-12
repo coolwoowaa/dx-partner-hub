@@ -726,7 +726,7 @@ function vLeave(){
   const perRows = Object.entries(per).sort((a,b) => b[1].days - a[1].days);
   const sorted = [...inMonth].sort((a,b) => a.start.localeCompare(b.start));
   return `<div class="head"><div><h1>휴가 일정</h1><p>정규직 팀원과 협력사 팀원의 연차·반차 일정을 등록하고 공유합니다. 주말과 공휴일은 휴가 일수에서 빠집니다.</p></div>
-    ${canW() ? `<button class="btn pri" data-act="vac-new">+ 휴가 등록</button>` : ''}</div>
+    <div class="row">${canW() ? '<button class="btn" data-act="exp-open">엑셀 내보내기</button>' : ''}${canW() ? `<button class="btn pri" data-act="vac-new">+ 휴가 등록</button>` : ''}</div></div>
   <div class="row" style="justify-content:space-between;margin-bottom:12px">
     <div class="row"><button class="btn sm" data-act="cal-prev" aria-label="이전 달">‹</button><h2 style="font-size:16px;min-width:110px;text-align:center" class="num">${y}년 ${m+1}월</h2><button class="btn sm" data-act="cal-next" aria-label="다음 달">›</button><button class="btn sm" data-act="cal-today">오늘</button></div>
     <div class="seg" role="group" aria-label="협력사 필터"><button data-act="cof" data-k="all" class="${S.coFilter==='all'?'on':''}">전체</button>${S.companies.map(c => `<button data-act="cof" data-k="${esc(c.id)}" class="${S.coFilter===c.id?'on':''}"><span class="dot" style="color:${coColor(c.id)}"></span> ${esc(c.name)}</button>`).join('')}</div>
@@ -770,7 +770,7 @@ function vAxBoard(){
   list = [...list].sort(byUpdated);
   const cnt = k => posts.filter(p => p.status===k).length;
   return `<div class="head"><div><h1>AX 실적</h1><p>디자인·퍼블리싱 파트에서 AI를 업무에 적용하며 얻은 활용 사례, 노하우, 산출물을 자유 형식으로 공유하고 관리합니다.</p></div>
-    ${canW() ? '<button class="btn pri" data-act="post-new">+ 새 글쓰기</button>' : ''}</div>
+    <div class="row">${canW() ? '<button class="btn" data-act="exp-open">엑셀 내보내기</button>' : ''}${canW() ? '<button class="btn pri" data-act="post-new">+ 새 글쓰기</button>' : ''}</div></div>
   <div class="pstats">
     <span>전체 <b class="num">${posts.length}</b></span><span>${tint('진행 중','purple')} <b class="num">${cnt('doing') + cnt('test')}</b></span><span>${tint('완료','green')} <b class="num">${cnt('done')}</b></span><span>${tint('활용 가능','orange')} <b class="num">${usable.length}</b></span>
     ${Object.entries(PARTS).map(([k,l]) => `<span class="muted">${l} <b class="num" style="color:var(--fg)">${posts.filter(p => p.part===k).length}</b></span>`).join('')}
@@ -910,6 +910,43 @@ async function savePost(){
 }
 
 /* ---------- AI IMAGE (designers) ---------- */
+// 협력사별 제출 현황 (디자인 파트 팀원 기준). 회사 단위 이관 기록이 있는 달은 미제출을 따지지 않는다.
+function submitState(mo, cos){
+  const inMo = S.ax.filter(a => isPartnerAx(a) && a.month===mo), dm = imgMembers();
+  return cos.map(c => {
+    const mem = dm.filter(m => m.companyId===c.id);
+    const legacy = inMo.some(a => a.companyId===c.id && !a.memberId);
+    const repOf = m => inMo.find(a => a.memberId===m.id);
+    const missing = legacy ? [] : mem.filter(m => !repOf(m));
+    const revise = mem.map(m => ({m, a: repOf(m)})).filter(x => x.a && statusOf(x.a)==='revise');
+    return {c, mem, legacy, missing, revise, done: mem.length - missing.length};
+  }).filter(x => x.mem.length || x.legacy);
+}
+function remindText(mo, list){
+  const miss = list.filter(x => x.missing.length), rev = list.filter(x => x.revise.length);
+  const n = (l, k) => l.reduce((t,x) => t + x[k].length, 0);
+  const lines = [`[디지털/기업 허브] ${monthLabel(mo, true)} AI 이미지 실적 제출 안내`, ''];
+  if (miss.length) { lines.push(`아직 제출하지 않은 분 (${n(miss,'missing')}명)`); miss.forEach(x => lines.push(`· ${x.c.name}: ${x.missing.map(m => m.name).join(', ')}`)); lines.push(''); }
+  if (rev.length) { lines.push(`보완이 필요한 분 (${n(rev,'revise')}명) — 사이트에서 검토 의견을 확인해 주세요`); rev.forEach(x => lines.push(`· ${x.c.name}: ${x.revise.map(r => r.m.name).join(', ')}`)); lines.push(''); }
+  lines.push('제출 방법: 허브 사이트 → AI 이미지 제작 → 실적 제출', siteUrl() + '#aiimg');
+  return lines.join('\n');
+}
+function submitSection(mo, cos, rm){
+  const sub = submitState(mo, cos); if (!sub.length) return '';
+  const open = mo > rm, word = open ? '제출 전' : '미제출';   // 이번 달은 아직 진행 중이라 '미제출'로 부르지 않는다
+  const missN = sub.reduce((t,x) => t + x.missing.length, 0), revN = sub.reduce((t,x) => t + x.revise.length, 0);
+  const todo = x => x.missing.length || x.revise.length;
+  const chip = (cls, inner, attrs) => canW() ? `<button class="chip chipbtn ${cls}" ${attrs}>${inner}</button>` : `<span class="chip ${cls}">${inner}</span>`;
+  return `<div class="sec"><div class="sec-h"><h2>${monthLabel(mo)} 제출 현황</h2>
+    <div class="row"><span class="muted" style="font-size:12px">${open ? '아직 진행 중인 달이에요 · ' : ''}${missN || revN ? [missN ? `${word} ${missN}명` : '', revN ? `보완 요청 ${revN}명` : ''].filter(Boolean).join(' · ') : '모두 제출했어요'}</span>
+      ${canW() && (missN || revN) ? `<button class="btn sm" data-act="remind-copy" data-month="${mo}">안내 문구 복사</button>` : ''}</div></div>
+  <div class="box subm">${sub.map(x => `<div class="subm-row">
+    <span class="subm-co"><span class="dot" style="color:${coColor(x.c.id)}"></span>${esc(x.c.name)}<small class="num">${x.legacy ? '회사 단위 기록' : `제출 ${x.done}/${x.mem.length}명`}</small></span>
+    <span class="subm-names">${x.legacy ? '<span class="muted" style="font-size:12px">개인별 내역이 없는 기존 현황판 기록이에요</span>' : !todo(x) ? '<span class="chip ok">모두 제출</span>' : ''}
+      ${x.missing.length ? `<span class="subm-l">${word}</span>${x.missing.map(m => chip(open ? '' : 'warn', memberAv(m, 16) + esc(m.name), `data-act="ax-new" data-member="${esc(m.id)}" data-month="${mo}" title="${esc(m.name)} 님 실적 제출하기"`)).join('')}` : ''}
+      ${x.revise.length ? `<span class="subm-l">보완 요청</span>${x.revise.map(r => `<button class="chip chipbtn bad" data-act="ax-view" data-id="${esc(r.a.id)}" title="검토 의견 보기">${memberAv(r.m, 16)}${esc(r.m.name)}</button>`).join('')}` : ''}</span>
+    ${canW() && sub.length > 1 && todo(x) ? `<button class="btn sm" data-act="remind-copy" data-month="${mo}" data-co="${esc(x.c.id)}">${esc(x.c.name)}만 복사</button>` : ''}</div>`).join('')}</div></div>`;
+}
 function axCell(a){
   const st = statusOf(a);
   return `<button class="cellbtn" data-act="ax-view" data-id="${esc(a.id)}"><span class="rate num"><span class="dot st-${st}" title="${STATUS[st].l}"></span>${pct(a.aiImage,a.total) ?? '–'}%</span><span class="cnt num">${a.aiImage} / ${a.total}</span></button>`;
@@ -975,13 +1012,14 @@ function vAx(){
     .sort((a,b) => ts(b.submittedAt) - ts(a.submittedAt));
 
   return `<div class="head"><div><h1>AI 이미지 제작 현황</h1><p>협력사 <b>디자인 파트</b> 팀원이 개인별로 월 실적(AI 이미지 제작 건수, AI 활용 제작 건수, 전체 이미지 제작 수)과 증빙을 올리면, 협력사별 합계와 팀원별 실적이 함께 집계됩니다. 디자인·퍼블리싱의 다른 AX 활동은 ‘AX 실적’ 메뉴에 올려주세요.</p></div>
-    <div class="row">${yrs.length>1 ? `<select id="axyear" style="width:auto">${yrs.map(y => `<option value="${y}" ${y===yr?'selected':''}>${y}년</option>`).join('')}</select>` : ''}${canW() ? `<button class="btn pri" data-act="ax-new">+ 실적 제출</button>` : ''}</div></div>
+    <div class="row">${yrs.length>1 ? `<select id="axyear" style="width:auto">${yrs.map(y => `<option value="${y}" ${y===yr?'selected':''}>${y}년</option>`).join('')}</select>` : ''}${canW() ? '<button class="btn" data-act="exp-open">엑셀 내보내기</button>' : ''}${canW() ? `<button class="btn pri" data-act="ax-new">+ 실적 제출</button>` : ''}</div></div>
 
   <div class="row" style="justify-content:space-between;margin-bottom:12px">
     <div class="row"><label for="axmonth" class="muted" style="font-size:12.5px">기준 월</label><select id="axmonth" style="width:auto">${pastMonths.map(m => `<option value="${m}" ${m===mo?'selected':''}>${monthLabel(m,true)}</option>`).join('')}</select></div>
     <div class="seg" role="group" aria-label="협력사 필터"><button data-act="axco" data-k="all" class="${S.axCo==='all'?'on':''}">전체</button>${pcos.map(c => `<button data-act="axco" data-k="${esc(c.id)}" class="${S.axCo===c.id?'on':''}"><span class="dot" style="color:${coColor(c.id)}"></span> ${esc(c.name)}</button>`).join('')}</div>
   </div>
   <div class="tiles fit">${tiles}</div>
+  ${submitSection(mo, shownCos, rm)}
 
   <div class="sec"><div class="sec-h"><h2>${yr}년 디자이너별 AI 이미지 적용 현황</h2><span class="muted" style="font-size:12px">적용률 = AI 이미지 제작 건수 ÷ 전체 이미지 제작 수 · 칸을 누르면 제출 내용과 첨부를 볼 수 있습니다</span></div>
   <div class="tbl-wrap"><table class="mx"><thead><tr><th>협력사 / 팀원</th>${months.map(m => `<th class="${m===mo?'curm':''}">${Number(m.slice(5))}월</th>`).join('')}<th>연간</th></tr></thead><tbody>
@@ -1004,13 +1042,131 @@ function vAx(){
     </tbody></table></div></div>`;
 }
 
+/* ---------- 엑셀(CSV) 내보내기 ----------
+ * 지금 화면에 불러온 데이터를 엑셀에서 바로 열리는 CSV(UTF-8 BOM)로 저장한다. 전체 백업은 CSV를 ZIP 하나로 묶는다.
+ * =, +, -, @ 로 시작하는 글자는 엑셀이 수식으로 실행하지 않도록 앞에 ' 를 붙인다.
+ */
+const csvCell = v => {
+  if (v == null) return '';
+  if (typeof v === 'number') return Number.isFinite(v) ? String(v) : '';
+  let t = String(v);
+  if (/^[=+\-@\t\r]/.test(t)) t = "'" + t;
+  return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+};
+const toCsv = (head, rows) => '\uFEFF' + [head, ...rows].map(r => r.map(csvCell).join(',')).join('\r\n') + '\r\n';
+const fmtDT = iso => { if (!iso) return ''; const d = new Date(iso); return `${ymd(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const kindOf = cid => !coById(cid) ? '' : isInternal(cid) ? '정규직' : '협력사';
+const stamp = () => ymd(new Date()).replace(/-/g, '');
+function vacRows(from, to){
+  const clip = !!from;
+  const list = S.vacations.filter(v => !clip || (v.start <= to && v.end >= from)).sort((a,b) => a.start.localeCompare(b.start) || ts(a.createdAt) - ts(b.createdAt));
+  return {head: ['팀원','소속','구분','파트','유형','시작일','종료일','차감 일수', ...(clip ? ['기간 내 일수'] : []), '메모','등록자','등록일'],
+    rows: list.map(v => { const m = memberById(v.memberId), cid = m?.companyId || v.companyId;
+      return [m?.name || '삭제된 팀원', coName(cid), kindOf(cid), m ? MEMBER_PARTS[m.part] || '' : '', (TYPES[v.type] || TYPES.etc).label, v.start, v.end, leaveDays(v),
+        ...(clip ? [leaveDays({...v, start: v.start < from ? from : v.start, end: v.end > to ? to : v.end})] : []), v.memo || '', v.createdBy ? nameOf(v.createdBy) : '', fmtDT(v.createdAt)]; })};
+}
+function imgRows(year){
+  const coSort = id => coById(id)?.sort || 0;
+  const list = S.ax.filter(a => isPartnerAx(a) && (!year || a.month.startsWith(year + '-')))
+    .sort((a,b) => a.month.localeCompare(b.month) || coSort(a.companyId) - coSort(b.companyId) || axWho(a).localeCompare(axWho(b), 'ko'));
+  return {head: ['실적 월','협력사','팀원','AI 이미지 제작','AI 활용 제작','전체 이미지','적용률(%)','상태','검토 의견','특이사항','첨부 수','제출자','제출일'],
+    rows: list.map(a => [monthLabel(a.month, true), coName(a.companyId), axWho(a), a.aiImage, a.aiWork, a.total, pct(a.aiImage, a.total), STATUS[statusOf(a)].l, S.reviews[a.id]?.comment || '', a.note || '',
+      (a.attachments || []).length, a.submittedBy ? nameOf(a.submittedBy) : '이관 데이터', fmtDT(a.submittedAt)])};
+}
+function imgSumRows(){
+  const AX = S.ax.filter(isPartnerAx), months = [...new Set(AX.map(a => a.month))].sort(), rows = [];
+  const line = (mo, label, l) => { const sm = sumAx(l); return [monthLabel(mo, true), label, sm.ai, sm.workN ? sm.work : null, sm.tot, pct(sm.ai, sm.tot), sm.n]; };
+  months.forEach(mo => { const inMo = AX.filter(a => a.month===mo);
+    partnerCos().forEach(c => { const l = inMo.filter(a => a.companyId===c.id); if (l.length) rows.push(line(mo, c.name, l)); });
+    rows.push(line(mo, '협력사 합계', inMo)); });
+  return {head: ['실적 월','협력사','AI 이미지 제작','AI 활용 제작','전체 이미지','적용률(%)','제출 건수'], rows};
+}
+const postRows = () => ({head: ['제목','요약','파트','소속','상태','활용 가능','AI Tool','분류','중요도','시작일','완료일','첨부 수','첨부 파일명','댓글 수','작성자','작성일','최근 업데이트','내용'],
+  rows: [...S.posts].sort(byUpdated).map(p => [p.title, p.summary || '', PARTS[p.part] || '', p.companyId ? coName(p.companyId) : '', P_STATUS[p.status]?.l || '', p.usable ? '예' : '', (p.tools || []).join(', '), P_CAT[p.category]?.l || '', P_PRI[p.priority]?.l || '',
+    p.start || '', p.end || '', (p.attachments || []).length, (p.attachments || []).map(f => f.name).join(', '), cmtCount(p.id), p.createdBy ? nameOf(p.createdBy) : '', fmtDT(p.createdAt), fmtDT(p.updatedAt), p.body || ''])});
+const commentRows = () => ({head: ['글 제목','댓글','작성자','작성일','수정일'],
+  rows: [...S.comments].sort((a,b) => ts(a.createdAt) - ts(b.createdAt)).map(c => [S.posts.find(p => p.id===c.postId)?.title || '삭제된 글', c.body, c.createdBy ? nameOf(c.createdBy) : '', fmtDT(c.createdAt), ts(c.updatedAt) - ts(c.createdAt) > 60e3 ? fmtDT(c.updatedAt) : ''])});
+function memberRows(){
+  const yr = now.getFullYear(), used = id => S.vacations.filter(v => v.memberId===id && v.start.startsWith(yr + '')).reduce((t,v) => t + leaveDays(v), 0);
+  const order = m => (isInternal(m.companyId) ? 0 : 1) * 1000 + (coById(m.companyId)?.sort || 0);
+  return {head: ['이름','소속','구분','파트','직무', `${yr}년 사용 휴가 일수`],
+    rows: [...S.members].sort((a,b) => order(a) - order(b) || a.name.localeCompare(b.name, 'ko')).map(m => [m.name, coName(m.companyId), kindOf(m.companyId), MEMBER_PARTS[m.part] || '', m.role || '', used(m.id)])};
+}
+const noticeRows = () => ({head: ['분류','고정','제목','내용','첨부 수','작성자','등록일','수정일'],
+  rows: sortedNotices().map(n => [NCATS[n.category] || '공지', n.pinned ? '예' : '', n.title, n.body || '', (n.attachments || []).length, n.createdBy ? nameOf(n.createdBy) : '', fmtDT(n.createdAt), ts(n.updatedAt) - ts(n.createdAt) > 60e3 ? fmtDT(n.updatedAt) : ''])});
+function exportSet(k){
+  const {y, m} = S.cal, mo = `${y}-${pad(m+1)}`, last = ymd(new Date(y, m+1, 0));
+  switch (k) {
+    case 'vac-month': return {name: `휴가_${mo}`, label: `${y}년 ${m+1}월`, ...vacRows(`${mo}-01`, last)};
+    case 'vac-year':  return {name: `휴가_${y}년`, label: `${y}년 전체`, ...vacRows(`${y}-01-01`, `${y}-12-31`)};
+    case 'vac-all':   return {name: '휴가_전체', label: '전체 기간', ...vacRows()};
+    case 'img-year':  return {name: `AI이미지실적_${S.axYear}년`, label: `${S.axYear}년 제출 내역`, ...imgRows(S.axYear)};
+    case 'img-all':   return {name: 'AI이미지실적_전체', label: '전체 제출 내역', ...imgRows()};
+    case 'img-sum':   return {name: 'AI이미지실적_월별합계', label: '월별 합계', ...imgSumRows()};
+    case 'posts':     return {name: 'AX실적_글', label: '글 목록', ...postRows()};
+    case 'comments':  return {name: 'AX실적_댓글', label: '댓글', ...commentRows()};
+    case 'members':   return {name: '팀원명단', label: '팀원 명단', ...memberRows()};
+    case 'notices':   return {name: '공지사항', label: '공지사항', ...noticeRows()};
+  }
+}
+const EXP_GROUPS = [['leave','휴가 일정',['vac-month','vac-year','vac-all']], ['aiimg','AI 이미지 실적',['img-year','img-all','img-sum']], ['ax','AX 실적',['posts','comments']], ['team','팀원 · 공지',['members','notices']]];
+const EXP_BACKUP = ['vac-all','img-all','img-sum','posts','comments','members','notices'];
+function saveBlob(blob, name){
+  const u = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 5000);
+}
+const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+const crc32 = b => { let c = ~0; for (let i = 0; i < b.length; i++) c = CRC_T[(c ^ b[i]) & 255] ^ (c >>> 8); return ~c >>> 0; };
+function zipStore(files){   // 압축 없이 묶기만 하는 ZIP (파일 이름은 UTF-8)
+  const enc = new TextEncoder(), parts = [], cen = [], d = new Date(); let off = 0;
+  const dt = (d.getFullYear() - 1980) << 9 | (d.getMonth() + 1) << 5 | d.getDate(), tm = d.getHours() << 11 | d.getMinutes() << 5 | d.getSeconds() >> 1;
+  for (const f of files) {
+    const nm = enc.encode(f.name), data = enc.encode(f.text), crc = crc32(data);
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0, 0x04034b50, true); lh.setUint16(4, 20, true); lh.setUint16(6, 0x0800, true); lh.setUint16(10, tm, true); lh.setUint16(12, dt, true);
+    lh.setUint32(14, crc, true); lh.setUint32(18, data.length, true); lh.setUint32(22, data.length, true); lh.setUint16(26, nm.length, true);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true); ch.setUint16(4, 20, true); ch.setUint16(6, 20, true); ch.setUint16(8, 0x0800, true); ch.setUint16(12, tm, true); ch.setUint16(14, dt, true);
+    ch.setUint32(16, crc, true); ch.setUint32(20, data.length, true); ch.setUint32(24, data.length, true); ch.setUint16(28, nm.length, true); ch.setUint32(42, off, true);
+    parts.push(lh.buffer, nm, data); cen.push(ch.buffer, nm);
+    off += 30 + nm.length + data.length;
+  }
+  const cenSize = cen.reduce((n, p) => n + p.byteLength, 0), end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(8, files.length, true); end.setUint16(10, files.length, true); end.setUint32(12, cenSize, true); end.setUint32(16, off, true);
+  return new Blob([...parts, ...cen, end.buffer], {type: 'application/zip'});
+}
+function exportForm(){
+  const here = EXP_GROUPS.findIndex(g => g[0]===S.route);
+  const groups = here > 0 ? [EXP_GROUPS[here], ...EXP_GROUPS.filter((_, i) => i !== here)] : EXP_GROUPS;
+  openModal(`${mhead('엑셀로 내보내기', '엑셀에서 바로 열리는 CSV 파일로 저장합니다. 지금 화면에 불러온 내용 기준입니다.')}
+  <div class="mb">
+    ${groups.map(([, title, keys]) => `<div class="f"><span class="lab">${title}</span><div class="row">${keys.map(k => { const x = exportSet(k);
+      return `<button class="btn" data-act="exp" data-k="${k}" ${x.rows.length ? '' : 'disabled'}>${esc(x.label)} <span class="muted num">${x.rows.length}${k==='img-sum' ? '줄' : k==='members' ? '명' : '건'}</span></button>`; }).join('')}</div></div>`).join('')}
+    <div class="f exp-all"><span class="lab">전체 백업</span><div class="row"><button class="btn ink" data-act="exp-all">한꺼번에 받기 (ZIP)</button><span class="hint">위 내용을 모두 담은 압축 파일 하나로 저장합니다. 첨부파일(이미지·문서)은 들어가지 않습니다.</span></div></div>
+  </div>
+  <div class="mf"><button class="btn" data-act="close">닫기</button></div>`, true);
+}
+function exportOne(k){
+  const x = exportSet(k); if (!x || !x.rows.length) return toast('내보낼 내용이 없습니다.');
+  const file = `허브_${x.name}_${stamp()}.csv`;
+  saveBlob(new Blob([toCsv(x.head, x.rows)], {type: 'text/csv;charset=utf-8'}), file);
+  toast(`${file} 을(를) 저장했습니다.`);
+}
+function exportAll(){
+  const files = EXP_BACKUP.map(exportSet).map(x => ({name: `${x.name}.csv`, text: toCsv(x.head, x.rows)}));
+  const file = `허브_전체백업_${stamp()}.zip`;
+  saveBlob(zipStore(files), file);
+  toast(`${file} 을(를) 저장했습니다.`);
+}
+
 /* ---------- TEAM ---------- */
 function vTeam(){
   const yr = now.getFullYear();
   const usedOf = mid => S.vacations.filter(v => v.memberId===mid && v.start.startsWith(yr+'')).reduce((s,v) => s+leaveDays(v), 0);
   const groups = [...S.companies].sort((a,b) => (a.kind==='internal'?0:1) - (b.kind==='internal'?0:1) || (a.sort||0) - (b.sort||0));
   return `<div class="head"><div><h1>협력사 · 팀원</h1><p>휴가 등록에 쓰이는 정규직 팀원과 협력사 팀원 명단입니다. ${yr}년 사용 휴가 일수가 함께 표시됩니다. 로그인 계정은 ‘사용자 관리’에서 따로 관리합니다.</p></div>
-    <div class="row">${S.isAdmin ? `<button class="btn" data-act="co-new">+ 그룹 추가</button>` : ''}${writableCos().length ? `<button class="btn pri" data-act="mem-new">+ 팀원 추가</button>` : ''}</div></div>
+    <div class="row">${canW() ? '<button class="btn" data-act="exp-open">엑셀 내보내기</button>' : ''}${S.isAdmin ? `<button class="btn" data-act="co-new">+ 그룹 추가</button>` : ''}${writableCos().length ? `<button class="btn pri" data-act="mem-new">+ 팀원 추가</button>` : ''}</div></div>
   ${groups.length ? `<div class="cos">${groups.map(c => { const ms = S.members.filter(m => m.companyId===c.id).sort((a,b) => a.name.localeCompare(b.name,'ko'));
     return `<section class="cocard"><header><b><span class="dot" style="color:${coColor(c.id)}"></span>${esc(c.name)}<span class="chip ${c.kind==='internal'?'acc':''}" style="height:20px;font-size:11px">${c.kind==='internal'?'정규직':'협력사'}</span></b><span class="row"><span class="muted" style="font-size:12px">${ms.length}명</span>${S.isAdmin ? `<button class="icon-btn" data-act="co-edit" data-id="${esc(c.id)}" aria-label="${esc(c.name)} 설정">설정</button>` : ''}</span></header>
     ${ms.length ? ms.map(m => `<div class="mrow">${memberAv(m, 30)}<span class="grow"><b>${esc(m.name)}</b> ${tint(MEMBER_PARTS[m.part]||'디자인', m.part==='publishing'?'teal':m.part==='etc'?'gray':'blue', 'style="height:18px;font-size:10.5px"')} <small>${esc(m.role||'')}</small></span><small class="num">${fmtDays(usedOf(m.id))}</small>${canCo(c.id) ? `<button class="icon-btn" data-act="mem-edit" data-id="${esc(m.id)}" aria-label="${esc(m.name)} 수정">수정</button>` : ''}</div>`).join('')
@@ -1463,6 +1619,9 @@ document.addEventListener('click', e => {
       if (g.dataset.group==='status') { const u = $('#p-usable'); if (u) { u.disabled = el.dataset.v!=='done'; if (u.disabled) u.checked = false; } }
       break; }
     case 'tool-add': addTool(); break;
+    case 'exp-open': if (canW()) exportForm(); break;
+    case 'exp': if (canW()) exportOne(k); break;
+    case 'exp-all': if (canW()) exportAll(); break;
     case 'cmt-add': if (canW()) addComment(el); break;
     case 'cmt-edit': cmtEditing = id; syncComments(); $('#cmt-edit-box')?.focus(); break;
     case 'cmt-cancel': cmtEditing = null; syncComments(); break;
@@ -1483,6 +1642,8 @@ document.addEventListener('click', e => {
     case 'ax-new': if (canW()) axForm(el.dataset.member, el.dataset.month); break;
     case 'ax-goto': e.preventDefault(); if (el.dataset.month) S.axMonth = el.dataset.month; if (el.dataset.co) S.axCo = el.dataset.co; S.axYear = Number((el.dataset.month||curMonth).slice(0,4)); if (location.hash==='#aiimg') render(); else location.hash = 'aiimg'; break;
     case 'axco': S.axCo = k; render(); break;
+    case 'remind-copy': { const mo = el.dataset.month, co = el.dataset.co || (S.axCo==='all' ? null : S.axCo);
+      copyText(remindText(mo, submitState(mo, partnerCos().filter(c => !co || c.id===co))), '안내 문구'); break; }
     case 'ax-view': axView(id); break;
     case 'axf': S.axFilter = k; render(); break;
     case 'review': review(k); break;
