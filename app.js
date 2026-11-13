@@ -683,16 +683,16 @@ function vHome(){
         return `<button class="wkday ${d===TODAY?'today':''} ${d===sel?'sel':''} ${g===0||HOLIDAYS[d]?'red':''}" data-act="hday" data-d="${d}" aria-pressed="${d===sel}"><small>${DOW[g]}</small><span class="num">${dd.getDate()}</span><i class="${has?'on':''}"></i></button>`; }).join('')}</div>
       <ul class="tl">${evs.length ? evs.map(e => `<li><span class="tl-k">${e.k}</span><span class="tl-v">${e.html}</span></li>`).join('') : `<li class="tl-empty">${loading('vacations') ? '불러오는 중…' : '휴가·일정이 없는 날이에요'}</li>`}</ul></section>
 
-    <section class="dcard span-8"><div class="dcard-h"><div class="tabs" role="tablist"><button role="tab" class="${S.homeNotice==='all'?'on':''}" data-act="hnotice" data-k="all" aria-selected="${S.homeNotice==='all'}">공지사항</button><button role="tab" class="${S.homeNotice==='must'?'on':''}" data-act="hnotice" data-k="must" aria-selected="${S.homeNotice==='must'}">필독</button></div><a class="more" href="#notice">더보기</a></div>
+    <section class="dcard span-12"><div class="dcard-h"><h2>${Number(rm.slice(5))}월 AI 이미지 제작</h2><a class="more" href="#aiimg" data-act="ax-goto" data-month="${rm}">현황판</a></div>
+      <div class="aistrip">${S.isAdmin && pc ? `<div class="callout"><span>검토를 기다리는 AI 이미지 실적이</span><b class="num">${pc}건</b><span>있어요!</span></div>`
+        : `<div class="callout calm"><span>${legacyRm ? '기존 현황판의 회사 단위 기록이에요' : `디자이너 제출 <b class="num">${subMem.size}/${dm.length}명</b>`}</span></div>`}
+      <div class="bars wide">${pcos.map(c => { const sm = sumAx(axRm.filter(a => a.companyId===c.id)), r = pct(sm.ai, sm.tot);
+        return `<button class="barrow" data-act="ax-goto" data-month="${rm}" data-co="${esc(c.id)}"><span class="bn"><span class="dot" style="color:${coColor(c.id)}"></span> ${esc(c.name)}</span><span class="bt"><span style="width:${r||0}%;background:${coColor(c.id)}"></span></span><span class="bv num">${r==null ? '–' : r+'%'}</span></button>`; }).join('')}
+        ${smRm.n ? `<div class="barrow total"><span class="bn">협력사 합계</span><span class="bt"><span style="width:${pct(smRm.ai,smRm.tot)||0}%"></span></span><span class="bv num">${pct(smRm.ai,smRm.tot)}%</span></div>` : ''}</div></div></section>
+
+    <section class="dcard span-12"><div class="dcard-h"><div class="tabs" role="tablist"><button role="tab" class="${S.homeNotice==='all'?'on':''}" data-act="hnotice" data-k="all" aria-selected="${S.homeNotice==='all'}">공지사항</button><button role="tab" class="${S.homeNotice==='must'?'on':''}" data-act="hnotice" data-k="must" aria-selected="${S.homeNotice==='must'}">필독</button></div><a class="more" href="#notice">더보기</a></div>
       <div class="ncols ${feat ? 'has-hn' : ''}">${feat ? heroNotice(feat) : ''}<ul class="nlist">${nlist.length ? nlist.map(n => `<li><button data-act="notice-view" data-id="${esc(n.id)}"><span class="nt">${n.pinned ? '<span class="chip acc" style="height:18px;font-size:10.5px">고정</span>' : ''}${esc(n.title)}${(Date.now() - ts(n.createdAt)) < 3*864e5 ? '<span class="nbadge">N</span>' : ''}</span><span class="num muted">${fmtTs(n.createdAt)}</span></button></li>`).join('')
         : `<li class="tl-empty">${loading('notices') ? '불러오는 중…' : S.homeNotice==='must' ? (feat ? '다른 필독 공지가 없어요' : '필독 공지가 없어요') : (feat ? '다른 공지가 없어요' : '등록된 공지가 없어요')}</li>`}</ul></div></section>
-
-    <section class="dcard span-4"><div class="dcard-h"><h2>${Number(rm.slice(5))}월 AI 이미지 제작</h2><a class="more" href="#aiimg" data-act="ax-goto" data-month="${rm}">현황판</a></div>
-      ${S.isAdmin && pc ? `<div class="callout"><span>검토를 기다리는 AI 이미지 실적이</span><b class="num">${pc}건</b><span>있어요!</span></div>`
-        : `<div class="callout calm"><span>${legacyRm ? '기존 현황판의 회사 단위 기록이에요' : `디자이너 제출 <b class="num">${subMem.size}/${dm.length}명</b>`}</span></div>`}
-      <div class="bars">${pcos.map(c => { const sm = sumAx(axRm.filter(a => a.companyId===c.id)), r = pct(sm.ai, sm.tot);
-        return `<button class="barrow" data-act="ax-goto" data-month="${rm}" data-co="${esc(c.id)}"><span class="bn"><span class="dot" style="color:${coColor(c.id)}"></span> ${esc(c.name)}</span><span class="bt"><span style="width:${r||0}%;background:${coColor(c.id)}"></span></span><span class="bv num">${r==null ? '–' : r+'%'}</span></button>`; }).join('')}
-        ${smRm.n ? `<div class="barrow total"><span class="bn">협력사 합계</span><span class="bt"><span style="width:${pct(smRm.ai,smRm.tot)||0}%"></span></span><span class="bv num">${pct(smRm.ai,smRm.tot)}%</span></div>` : ''}</div></section>
   </div>`;
 }
 

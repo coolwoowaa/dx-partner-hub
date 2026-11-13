@@ -75,7 +75,7 @@ const shotsDir = (() => { const i = process.argv.indexOf('--shots'); return i > 
       const hn = await p.evaluate(() => { const n = document.querySelector('.hn'); if (!n) return null; const sh = n.querySelector('.shine'), img = n.querySelector('.hn-thumb img');
         const r = n.getBoundingClientRect(), l = n.parentElement.querySelector('.nlist').getBoundingClientRect(), view = document.querySelector('#view');
         return { title: sh?.textContent || '', anim: getComputedStyle(sh).animationName, body: (n.querySelector('.hn-text')?.textContent || '').length, img: !!(img && img.getAttribute('src')),
-          h: Math.round(r.height), left: r.right <= l.left + 1, above: r.bottom <= l.top + 1, last: !!n.closest('.dash-grid') && n.closest('.dcard').getBoundingClientRect().top > view.querySelector('.ptiles').getBoundingClientRect().bottom,
+          h: Math.round(r.height), w: Math.round(r.width), lw: Math.round(l.width), bottom: n.closest('.dcard') === document.querySelector('.dash-grid').lastElementChild, left: r.right <= l.left + 1, above: r.bottom <= l.top + 1, last: !!n.closest('.dash-grid') && n.closest('.dcard').getBoundingClientRect().top > view.querySelector('.ptiles').getBoundingClientRect().bottom,
           dup: [...n.parentElement.querySelectorAll('.nlist .nt')].some(x => x.textContent.includes(sh.textContent)) }; });
       if (!hn) fail(`${acc.label}/${vp.tag}`, '홈에 대표 공지가 없음');
       else {
@@ -83,7 +83,9 @@ const shotsDir = (() => { const i = process.argv.indexOf('--shots'); return i > 
         if (hn.anim !== 'hn-shine') fail(`${acc.label}/${vp.tag}`, `제목 반짝임이 적용되지 않음 (${hn.anim})`);
         if (hn.body < 40) fail(`${acc.label}/${vp.tag}`, '대표 공지 내용이 보이지 않음');
         if (!hn.last || !(vp.tag === 'PC' ? hn.left : hn.above)) fail(`${acc.label}/${vp.tag}`, `대표 공지 위치가 다름 (맨 아래 공지사항 목록의 ${vp.tag === 'PC' ? '왼쪽' : '위'}이어야 함)`);
-        if (hn.h > (vp.tag === 'PC' ? 290 : 170)) fail(`${acc.label}/${vp.tag}`, `대표 공지 카드가 너무 큼 (높이 ${hn.h}px)`);
+        if (!hn.bottom) fail(`${acc.label}/${vp.tag}`, '공지사항 카드가 홈 맨 아래가 아님');
+        if (hn.h > (vp.tag === 'PC' ? 260 : 170)) fail(`${acc.label}/${vp.tag}`, `대표 공지 카드가 너무 높음 (높이 ${hn.h}px)`);
+        if (vp.tag === 'PC' && (hn.w < 684 || hn.lw < 240)) fail(`${acc.label}/${vp.tag}`, `대표 공지 가로 ${hn.w}px (684px 이상이어야 함), 오른쪽 목록 ${hn.lw}px (240px 이상)`);
         if (hn.dup) fail(`${acc.label}/${vp.tag}`, '대표 공지가 오른쪽 목록에도 중복으로 나옴');
         if (!hn.img) fail(`${acc.label}/${vp.tag}`, '대표 공지 썸네일이 불러와지지 않음');
         await p.click('.hn'); await p.waitForTimeout(150);
